@@ -154,12 +154,10 @@ load_palettes:  LDA #$3f
                 STA PPUCTRL
 
 ;; ready to start mon
-                LDA #$E8
-                STA VSCROLLY
                 LDY #$1F
-                LDA #$23        ; set the VSCROLL start
+                LDA #$20        ; set the VSCROLL start
                 STA VSCROLLH
-                LDA #$A0
+                LDA #$01
                 STA VSCROLLL
 NOTCR:          CMP #$02        ; ESC?
                 BEQ ESCAPE      ; Yes.
@@ -354,6 +352,8 @@ NMI:            BIT READY       ; abort if not ready yet
                 LDA VSCROLLL
                 STA PPUADDR
                 
+                LDA #$00
+                TAX
                 LDY #$1d
                 : STA PPUDATA
                 DEY
@@ -364,13 +364,11 @@ NMI:            BIT READY       ; abort if not ready yet
                 PLA
                 STA VSCROLLH
 
-;; set the scroll so the text is horizontally centered
-                BIT PPUSTATUS
-                LDA #$F8        ; set scroll
-                STA PPUSCROLL
+                BIT PPUSTATUS   
+                STX PPUSCROLL   ; set scroll
                 LDA VSCROLLY
                 STA PPUSCROLL
-                LDA #%10000001	; select nametable and keep NMI enabled
+                LDA #%10000000	; select nametable and keep NMI enabled
                 STA PPUCTRL
                 
                 JSR READJOY
@@ -487,11 +485,11 @@ INCVSCROLL:     LDA VSCROLLH
                 CMP #$23
                 BNE INCVSCROLLL
                 LDA VSCROLLL
-                CMP #$A0
+                CMP #$A1
                 BNE INCVSCROLLL
                 LDA #$20
                 STA VSCROLLH
-                LDA #$00
+                LDA #$01
                 STA VSCROLLL
                 RTS
 INCVSCROLLL:    CLC

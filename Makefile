@@ -6,7 +6,7 @@ OBJ_FILES=$(GAME).o
 
 all: $(GAME).nes
 
-$(GAME).$(FORMAT): $(OBJ_FILES) nes.cfg
+$(GAME).nes: $(OBJ_FILES) nes.cfg
 	$(LINKER) -o $(GAME).nes -C nes.cfg $(OBJ_FILES) -m $(GAME).map.txt -Ln $(GAME).labels.txt --dbgfile $(GAME).dbg
 
 .PHONY: clean
