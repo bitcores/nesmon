@@ -1,9 +1,8 @@
 .segment "HEADER"
-  ; .byte "NES", $1A      ; iNES header identifier
-  .byte $4E, $45, $53, $1A
-  .byte $02               ; 2x 16KB PRG code
-  .byte $00               ; 0x  8KB CHR data
-  .byte $A9, $D0        ; mapper 0, vertical mirroring
+  .byte "NES", $1A ; iNES header identifier
+  .byte $01        ; 1x 16KB PRG code
+  .byte $00        ; 0x  8KB CHR data
+  .byte $A9, $D0   ; mapper 218, "Single-screen, BLK1" config: https://www.nesdev.org/wiki/INES_Mapper_218
 
 .segment "VECTORS"
   ;; When an NMI happens (once per frame if enabled) the label nmi:
@@ -11,14 +10,10 @@
   ;; When the processor first turns on or is reset, it will jump to the label reset:
   .addr RESET
   ;; External interrupt IRQ (unused)
-  .addr 0
-
-; "nes" linker config requires a STARTUP section, even if it's empty
-.segment "STARTUP"
+  .addr IRQ
 
 ; Main code segment for the program
 .segment "CODE"
-
 
 ;  The WOZ Monitor for the Apple 1
 ;  Written by Steve Wozniak in 1976
@@ -42,6 +37,8 @@ buttons         = $2F           ;  current buttons value
 lastbuttons     = $30           ;  last buttons value
 YIN             = $31           ;  Y-index of Input buffer
 YOUT            = $32           ;  Y-index of Display buffer
+READY           = $33           ;  NMI ready flag
+ROW             = $34           ;  row number
 
 
 ; Other Variables
@@ -71,22 +68,21 @@ BUTTON_DOWN     = 1 << 2
 BUTTON_LEFT     = 1 << 1
 BUTTON_RIGHT    = 1 << 0
 
-               .export RESET
-
 RESET:          SEI
                 CLD             ; Clear decimal arithmetic mode.
-                CLI
                 LDX #$40        
-                STX $4017	; disable APU frame IRQ
-                LDX #$ff 	; Set up stack
-                TXS 		;  Set stack pointer to $FF
-                LDX #$00
-                STX PPUCTRL	; disable NMI
-                STX PPUMASK ; disable rendering
-                STX $4010 	; disable DMC IRQs
+                STX $4017	    ; disable APU frame IRQ
+                LDX #$ff 	    ; Set up stack
+                TXS 		    ;  Set stack pointer to $FF
+                INX
+                STX PPUCTRL	    ; disable NMI
+                STX PPUMASK     ; disable rendering
+                STX $4010 	    ; disable DMC IRQs
                 
 ;; first wait for vblank to make sure PPU is ready
-                JSR VBWAIT
+                BIT PPUSTATUS
+                : BIT PPUSTATUS
+                BPL :-
 
 clear_ram:      LDA #$00
                 STA $0000, x
@@ -102,15 +98,23 @@ clear_ram:      LDA #$00
                 BNE clear_ram
 
 ;; second wait for vblank, PPU is ready after this
-                JSR VBWAIT
+                : BIT PPUSTATUS
+                BPL :-
 
-                LDA #$00 	; Set SPR-RAM address to 0
-                STA OAMADDR
-                LDA #$02  ; Set OAMDMA address to $0200
-                STA OAMDMA
+;; load palettes within vblank to hide visible stripes
+load_palettes:  LDA #$3f
+                STA PPUADDR
+                LDA #$00
+                STA PPUADDR
+                LDX #$00
+                : LDA PALETTES, x
+                STA PPUDATA
+                INX
+                CPX #$20
+                BNE :-
 
 ;; clear out the nametable/attribute RAM
-                LDA PPUSTATUS
+                BIT PPUSTATUS
                 LDA #$20
                 STA PPUADDR
                 LDA #$00
@@ -124,18 +128,7 @@ clear_ram:      LDA #$00
                 DEY
                 BNE :--
 
-load_palettes:  LDA PPUSTATUS
-                LDA #$3f
-                STA PPUADDR
-                LDA #$00
-                STA PPUADDR
-                LDX #$00
-                : LDA PALETTES, x
-                STA PPUDATA
-                INX
-                CPX #$20
-                BNE :-
-
+;; load CHR-RAM data
                 LDA #<TILEDATA
                 STA $00
                 LDA #>TILEDATA
@@ -144,7 +137,7 @@ load_palettes:  LDA PPUSTATUS
                 STY PPUMASK
                 STY PPUADDR
                 STY PPUADDR
-                LDX #$04  ; store up to 4x 256B pages
+                LDX #$04        ; store up to 4x 256B pages
                 : LDA ($00),y
                 STA PPUDATA
                 INY
@@ -159,11 +152,10 @@ load_palettes:  LDA PPUSTATUS
                 STA PPUSCROLL
                 LDA #%10000000	; Enable NMI
                 STA PPUCTRL
-                LDA #%00011010	; Enable sprites and background
-                STA PPUMASK
 
 ;; ready to start mon
-                
+                LDA #$E8
+                STA VSCROLLY
                 LDY #$1F
                 LDA #$23        ; set the VSCROLL start
                 STA VSCROLLH
@@ -183,7 +175,7 @@ GETLINE:        JSR CLEARLINE   ;
                 LDY #$01        ; Initialize text index.
 BACKSPACE:      DEY             ; Back up text index.
                 BMI GETLINE     ; Beyond start of line, reinitialize.
-NEXTCHAR:       JSR READJOY     ; Read the joypad for button presses
+NEXTCHAR:       JSR VBWAIT      ; Read the joypad for button presses
                 LDA buttons
                 CMP lastbuttons
                 BEQ NEXTCHAR    ; Loop until ready.
@@ -310,44 +302,78 @@ ECHO:           STY YIN
                 RTS             ; Return.
                 ;; ECHO needs to be used to push characters into the frame layout
 
-                BRK             ; unused
-                BRK             ; unused
-
-VBWAIT:         BIT PPUSTATUS   ; wait for v-blank after ECHO
-                BPL VBWAIT
+;; PPUSTATUS bit 7 is unreliable for vblank detection
+;; use a flag in RAM instead, so the NMI handler knows it's safe to run
+VBWAIT:         SEC             ; set NMI ready flag
+                ROR READY
+                : BIT READY      ; and wait until the NMI handler clears it
+                BMI :-
                 RTS
 
-NMI:            ; push contents of flags, and registers onto stack
-                PHP
-                PHA
+NMI:            BIT READY       ; abort if not ready yet
+                BPL IRQ
+                
+                PHA             ; push contents of registers onto stack
                 TXA
                 PHA
                 TYA
                 PHA
                 
-                CLC
-                LDY #$00
-
-                LDA PPUSTATUS
-                LDA VSCROLLH    
+                LDY #$00 	    ; Set SPR-RAM address to 0
+                STY OAMADDR
+                LDA #$02        ; Set OAMDMA address to $0200
+                STA OAMDMA
+                LDA #%00011110	; Enable sprites and background
+                STA PPUMASK
+                
+;; transfer DSPBUF contents to the PPU nametable
+                BIT PPUSTATUS
+                LDA VSCROLLH
                 STA PPUADDR
-                TYA             ; set accumulator to value Y
-                ADC VSCROLLL    ; add the low vscroll to Y to get x offset
+                LDA VSCROLLL
                 STA PPUADDR
                 
-                :LDA DSPBUF, Y
+                : LDA DSPBUF, Y  ; enters with Y = 0
                 INY
                 CMP #$8D
                 BEQ :-
                 STA PPUDATA
                 CPY #$1E
                 BNE :-
+                
+;; clear an extra line after the input display so the vertical mirroring isn't apparent on the bottom row
+                LDA VSCROLLH
+                PHA
+                LDA VSCROLLL
+                PHA
+                JSR INCVSCROLL
+                
+                BIT PPUSTATUS
+                LDA VSCROLLH
+                STA PPUADDR
+                LDA VSCROLLL
+                STA PPUADDR
+                
+                LDY #$1d
+                : STA PPUDATA
+                DEY
+                BPL :-
+                
+                PLA
+                STA VSCROLLL
+                PLA
+                STA VSCROLLH
 
-                LDA PPUSTATUS
-                LDA #$00        ; set scroll
+;; set the scroll so the text is horizontally centered
+                BIT PPUSTATUS
+                LDA #$F8        ; set scroll
                 STA PPUSCROLL
                 LDA VSCROLLY
                 STA PPUSCROLL
+                LDA #%10000001	; select nametable and keep NMI enabled
+                STA PPUCTRL
+                
+                JSR READJOY
 
                 ; restore contents of flags and registers from stack
                 PLA
@@ -355,8 +381,9 @@ NMI:            ; push contents of flags, and registers onto stack
                 PLA
                 TAX
                 PLA
-                PLP
-
+                
+                ASL READY       ; clear NMI ready flag
+IRQ:
                 RTI
 
 READJOY:        LDA #$00
@@ -425,7 +452,15 @@ JOYSAME:        RTS
 CLEARLINE:      STY YIN   ; save the y value for IN
                 ; increase the vscroll
                 JSR INCVSCROLL
-                CLC
+
+;; keep the vertical scroll fixed until we reach row $1d, to simulate the original Apple 1 terminal
+;; this also ensures that the text display is mostly within the "action safe" area
+;; see: https://www.nesdev.org/wiki/Overscan
+                INC ROW
+                LDA #$1c
+                CMP ROW
+                BCS :+
+                STA ROW
                 LDA #$08
                 ADC VSCROLLY
                 CMP #$F0
@@ -433,9 +468,9 @@ CLEARLINE:      STY YIN   ; save the y value for IN
                 LDA #$00
 SKIPOVER:       STA VSCROLLY
                 ; clear DSPBUF so it will write a blank line
-                LDA #$00
+                : LDA #$00
                 LDY #$20
-                :STA DSPBUF, Y
+                : STA DSPBUF, Y
                 DEY
                 BPL :-
                 TAY             ; return "cursor" to the start
@@ -445,7 +480,7 @@ SKIPOVER:       STA VSCROLLY
 
                 JSR VBWAIT      ; wait for v-blank
                 
-                LDY YIN   ; restore the y value for IN
+                LDY YIN         ; restore the y value for IN
                 RTS
 
 INCVSCROLL:     LDA VSCROLLH
@@ -463,10 +498,9 @@ INCVSCROLLL:    CLC
                 LDA #$20
                 ADC VSCROLLL
                 STA VSCROLLL
-                BCS INCVSCROLLH
-                RTS
+                BCC :+
 INCVSCROLLH:    INC VSCROLLH
-                RTS
+                : RTS
 
 KEYSET:         TYA
                 PHA
@@ -487,7 +521,9 @@ LOADKEY:        LDA KEYMAP, Y
                 STA DSPBUF, Y
                 RTS
 
-; Interrupt Vectors
+.segment "RODATA"
+
+; Key Map
 KEYMAP:
   .byte $03, $04, $05, $06
   .byte $07, $08, $09, $0A
@@ -508,5 +544,5 @@ PALETTES:
   .byte $0F, $1A, $00, $00
   .byte $0F, $34, $00, $00
 
-.segment "RODATA"
 TILEDATA: .incbin "./chars.chr"
+
