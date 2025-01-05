@@ -1,3 +1,5 @@
+.include "keyboard.s"
+
 .segment "HEADER"
   ; .byte "NES", $1A      ; iNES header identifier
   .byte $4E, $45, $53, $1A
@@ -25,7 +27,6 @@
 
 
 ; Page 0 Variables
-
 XAML            = $24           ;  Last "opened" location Low
 XAMH            = $25           ;  Last "opened" location High
 STL             = $26           ;  Store address Low
@@ -38,19 +39,20 @@ MODE            = $2B           ;  $00=XAM, $7F=STOR, $AE=BLOCK XAM
 VSCROLLL        = $2C           ;  vertical scroll value low
 VSCROLLH        = $2D           ;  vertical scroll value high
 VSCROLLY        = $2E           ;  vertical scroll y value
-buttons         = $2F           ;  current buttons value
-lastbuttons     = $30           ;  last buttons value
-YIN             = $31           ;  Y-index of Input buffer
-YOUT            = $32           ;  Y-index of Display buffer
+YIN             = $30           ;  Y-index of Input buffer
+YOUT            = $31           ;  Y-index of Display buffer
+kbdetect        = $32           ;  00 if joypad, 01 if fami keyboard, 02 if keyboard host
+kbinput         = $33
+mseinput        = $34
+kbreadp         = $35           ; pointer for reading from kbread buffer
+kbread          = $36
+mseread         = $3A
+fkbtemp         = $3F
 
 
 ; Other Variables
-
 IN              = $0300         ;  Input buffer to $031E ; $0200 is OAM by convention
-DSPBUF          = $0320         ;  Display buffer to $033E
-KEYPTR          = $031E         ;  pointer for the keymap
-INBUF           = $031F         ;  currently modified character
-
+DSP             = $0320         ;  Display buffer to $033E
 PPUCTRL         = $2000
 PPUMASK         = $2001
 PPUSTATUS       = $2002
@@ -61,15 +63,8 @@ PPUADDR         = $2006
 PPUDATA         = $2007
 OAMDMA          = $4014
 JOYPAD1         = $4016
+JOYPAD2         = $4017
 
-BUTTON_A        = 1 << 7
-BUTTON_B        = 1 << 6
-BUTTON_SELECT   = 1 << 5
-BUTTON_START    = 1 << 4
-BUTTON_UP       = 1 << 3
-BUTTON_DOWN     = 1 << 2
-BUTTON_LEFT     = 1 << 1
-BUTTON_RIGHT    = 1 << 0
 
                .export RESET
 
@@ -96,6 +91,7 @@ clear_ram:      LDA #$00
                 STA $0500, x
                 STA $0600, x
                 STA $0700, x
+                STA $6000, x
                 LDA #$FE
                 STA $0200, x
                 INX
@@ -162,67 +158,60 @@ load_palettes:  LDA PPUSTATUS
                 LDA #%00011010	; Enable sprites and background
                 STA PPUMASK
 
+;; initialize keyboard
+JSR KEYBOARD::INIT
+
 ;; ready to start mon
                 
-                LDY #$1F
+NESMON:         LDY #$1F
                 LDA #$23        ; set the VSCROLL start
                 STA VSCROLLH
-                LDA #$A0
+                LDA #$81
                 STA VSCROLLL
-NOTCR:          CMP #$02        ; ESC?
+NOTCR:          CMP #$88        ; Backspace?
+                BEQ BACKSPACE   ; Yes.
+                CMP #$9B        ; ESC?
                 BEQ ESCAPE      ; Yes.
-                                ; only advance text index if input was A button
-                ;INY            ; Advance text index.
+                INY            ; Advance text index.
                 CPY #$1E        ; compare with 30
                 BMI NEXTCHAR    ; Auto ESC if > 30.
-ESCAPE:         JSR CLEARLINE
-                LDA #$02        ; "\" how about /
-                STA INBUF
+ESCAPE:         LDA #'\'+$80    ; "\".
                 JSR ECHO        ; Output it.
 GETLINE:        JSR CLEARLINE   ;
                 LDY #$01        ; Initialize text index.
 BACKSPACE:      DEY             ; Back up text index.
                 BMI GETLINE     ; Beyond start of line, reinitialize.
-NEXTCHAR:       JSR READJOY     ; Read the joypad for button presses
-                LDA buttons
-                CMP lastbuttons
-                BEQ NEXTCHAR    ; Loop until ready.
-                JSR PROCESSJOY  ; process the input
+NEXTCHAR:       JSR KEYBOARD::KBDREADY ; Key ready?
+                BPL NEXTCHAR    ; Loop until ready
+                JSR KEYBOARD::KBDREAD ; Load character
+                STA IN,Y
+                JSR ECHO
                 CMP #$8D
                 BNE NOTCR       ; No.
                 LDY #$FF        ; Reset text index.
                 LDA #$00        ; For XAM mode.
                 TAX             ; 0->X.
 SETSTOR:        ASL             ; Leaves $7B if setting STOR mode.
-                ASL
-                ASL
-                ASL
-SETBLKM:        ROR
 SETMODE:        STA MODE        ; $00=XAM $7B=STOR $AE=BLOK XAM
 BLSKIP:         INY             ; Advance text index.
-                STY YIN
-NEXTITEM:       LDY YIN
-                LDA IN,Y        ; Get character.
+NEXTITEM:       LDA IN,Y        ; Get character.
                 CMP #$8D        ; CR?
                 BEQ GETLINE     ; Yes, done this line.
-                CMP #$01        ; "."?
+                CMP #'.'+$80    ; "."?
                 BCC BLSKIP      ; Skip delimiter.
-                BEQ SETBLKM     ; Yes. Set STOR mode.
-                CMP #$0D        ; ":"?
+                BEQ SETMODE     ; Yes. Set STOR mode.
+                CMP #';'+$80    ; ":"? change once SHIFT mode added
                 BEQ SETSTOR     ; Yes. Set STOR mode.
-                CMP #$1B        ; "R"?
+                CMP #'R'+$80        ; "R"?
                 BEQ RUN         ; Yes. Run user program.
                 STX L           ; $00-> L.
                 STX H           ; and H.
                 STY YSAV        ; Save Y for comparison.
 NEXTHEX:        LDA IN,Y        ; Get character for hex test.
-                SEC
-                SBC #$03        ; Map digits to $0-9.
+                EOR #$B0        ; Map digits to $0-9.
                 CMP #$0A        ; Digit?
                 BCC DIG         ; Yes.
-                SBC #$06
-                SEC
-                ADC #$EE        ; Map letter "A"-"F" to $FA-FF.
+                ADC #$88        ; Map letter "A"-"F" to $FA-FF.
                 CMP #$FA        ; Hex letter?
                 BCC NOTHEX      ; No, character not hex.
 DIG:            ASL
@@ -235,8 +224,7 @@ HEXSHIFT:       ASL             ; Hex digit left, MSB to carry.
                 ROL H           ;  Rotate into MSD’s.
                 DEX             ; Done 4 shifts?
                 BNE HEXSHIFT    ; No, loop.
-                INY             ; Advance text index.
-                STY YIN             
+                INY             ; Advance text index.          
                 BNE NEXTHEX     ; Always taken. Check next char for hex.
 NOTHEX:         CPY YSAV        ; Check if L, H empty (no hex digits).
                 BEQ ESCAPE      ; Yes, generate ESC sequence.
@@ -262,11 +250,9 @@ NXTPRNT:        BNE PRDATA      ; NE means no address to print.
                 JSR PRBYTE      ; Output it in hex format.
                 LDA XAML        ; Low-order ‘examine index’ byte.
                 JSR PRBYTE      ; Output it in hex format.
-                LDA #$0D        ; ":".
-                STA INBUF
+                LDA #':'+$80        ; ":".
                 JSR ECHO        ; Output it.
-PRDATA:         LDA #$00        ; Blank.
-                STA INBUF
+PRDATA:         LDA #$A0        ; Blank.
                 JSR ECHO        ; Output it.
                 LDA (XAML,X)    ; Get data byte at ‘examine index’.
                 JSR PRBYTE      ; Output it in hex format.
@@ -290,21 +276,15 @@ PRBYTE:         PHA             ; Save A for LSD.
                 JSR PRHEX       ; Output hex digit.
                 PLA             ; Restore A.
 PRHEX:          AND #$0F        ; Mask LSD for hex print.
-                CLC             
-                ADC #$03        ; Add 3 to shift.
-                STA INBUF
-                CMP #$0D        ; Digit?
+                ORA #$B0        ; Add "0"
+                CMP #$BA        ; Digit?
                 BCC ECHO        ; Yes, output it.
                 ADC #$06        ; Add offset for letter.
-                STA INBUF
 ECHO:           STY YIN
                 LDY YOUT
-                LDA INBUF       ; load the character from inbuf
-                STA DSPBUF, Y   ; store the character in DSPBUF for output
+                STA DSP,Y
                 INY
                 JSR VBWAIT
-                LDA #$00
-                STA INBUF
                 STY YOUT
                 LDY YIN
                 RTS             ; Return.
@@ -325,22 +305,43 @@ NMI:            ; push contents of flags, and registers onto stack
                 TYA
                 PHA
                 
-                CLC
                 LDY #$00
-
                 LDA PPUSTATUS
                 LDA VSCROLLH    
                 STA PPUADDR
-                TYA             ; set accumulator to value Y
-                ADC VSCROLLL    ; add the low vscroll to Y to get x offset
-                STA PPUADDR
-                
-                :LDA DSPBUF, Y
+                LDA VSCROLLL
+                STA PPUADDR          
+                :LDA DSP,Y
                 INY
                 CMP #$8D
                 BEQ :-
+                JSR KEYBOARD::CONVASCII
                 STA PPUDATA
-                CPY #$1E
+                CPY #$20
+                BNE :-
+
+                ; clear the next line as well before scrolling
+                LDA PPUSTATUS
+                CLC
+                TYA
+                ADC VSCROLLL
+                TAY
+                LDA VSCROLLH
+                ADC #$00
+                CMP #$23  ; check if we have to scroll to first line
+                BCC :+
+                CPY #$C0
+                BCC :+
+                LDA #$20  ; set first line
+                LDY #$01
+                :STA PPUADDR
+                TYA
+                STA PPUADDR
+                LDY #$20
+                LDA #$00
+                :STA PPUDATA
+                INY
+                CPY #$40
                 BNE :-
 
                 LDA PPUSTATUS
@@ -359,71 +360,8 @@ NMI:            ; push contents of flags, and registers onto stack
 
                 RTI
 
-READJOY:        LDA #$00
-                STA JOYPAD1
-                LDA #$01
-                STA JOYPAD1
-                STA buttons
-                LSR A
-                STA JOYPAD1
-                : LDA JOYPAD1
-                LSR A
-                ROL buttons
-                BCC :-
-                RTS
-
-PROCESSJOY:     STA lastbuttons
-                AND #BUTTON_DOWN
-                BEQ JOYNOTDOWN
-                INC KEYPTR
-                JSR KEYSET                
-                JMP JOYSAME
-JOYNOTDOWN:     LDA lastbuttons
-                AND #BUTTON_UP
-                BEQ JOYNOTUP
-                DEC KEYPTR
-                JSR KEYSET
-                JMP JOYSAME
-JOYNOTUP:       LDA lastbuttons
-                AND #BUTTON_A
-                BEQ JOYNOTA
-                LDA INBUF
-                STA IN, Y
-                INY
-                STA DSPBUF, Y
-                JMP JOYSAME
-JOYNOTA:        LDA lastbuttons
-                AND #BUTTON_B
-                BEQ JOYNOTB
-                LDA #$00
-                STA DSPBUF, Y
-                DEY
-                LDA IN, Y
-                STA INBUF
-                JMP JOYBOUNDS
-JOYNOTB:        LDA lastbuttons
-                AND #BUTTON_START
-                BEQ JOYNOTSTART
-                LDA INBUF
-                STA IN, Y
-                INY
-                LDA #$8D
-                STA IN, Y
-                JMP JOYSAME
-JOYNOTSTART:    LDA lastbuttons
-                AND #BUTTON_SELECT
-                BEQ JOYSAME
-                LDA #$02
-                JMP JOYSAME
-JOYBOUNDS:      CPY #$00
-                BPL JOYSAME
-JOYNEG:         LDA #$00
-                TAY
-JOYSAME:        RTS
-
-
-CLEARLINE:      STY YIN   ; save the y value for IN
-                ; increase the vscroll
+CLEARLINE:      JSR VBWAIT      ; wait for v-blank
+                STY YIN
                 JSR INCVSCROLL
                 CLC
                 LDA #$08
@@ -432,31 +370,25 @@ CLEARLINE:      STY YIN   ; save the y value for IN
                 BCC SKIPOVER
                 LDA #$00
 SKIPOVER:       STA VSCROLLY
-                ; clear DSPBUF so it will write a blank line
+                ; clear IN so it will write a blank line
                 LDA #$00
-                LDY #$20
-                :STA DSPBUF, Y
-                DEY
-                BPL :-
-                TAY             ; return "cursor" to the start
+                LDY #$41
+                :DEY
+                STA DSP,Y 
+                BNE :-
                 STY YOUT
-                STA KEYPTR      ; reset key pointer
-                JSR KEYSET
-
-                JSR VBWAIT      ; wait for v-blank
-                
-                LDY YIN   ; restore the y value for IN
+                LDY YIN
                 RTS
 
 INCVSCROLL:     LDA VSCROLLH
                 CMP #$23
                 BNE INCVSCROLLL
                 LDA VSCROLLL
-                CMP #$A0
+                CMP #$A1
                 BNE INCVSCROLLL
                 LDA #$20
                 STA VSCROLLH
-                LDA #$00
+                LDA #$01
                 STA VSCROLLL
                 RTS
 INCVSCROLLL:    CLC
@@ -468,32 +400,6 @@ INCVSCROLLL:    CLC
 INCVSCROLLH:    INC VSCROLLH
                 RTS
 
-KEYSET:         TYA
-                PHA
-                LDY KEYPTR
-                CPY #$14
-                BCC LOADKEY
-                LDA #$00
-                CPY #$FE
-                BCC PTRL
-                LDA #$13
-PTRL:           TAY
-LOADKEY:        LDA KEYMAP, Y
-                STA INBUF
-                STY KEYPTR
-                PLA
-                TAY
-                LDA INBUF
-                STA DSPBUF, Y
-                RTS
-
-; Interrupt Vectors
-KEYMAP:
-  .byte $03, $04, $05, $06
-  .byte $07, $08, $09, $0A
-  .byte $0B, $0C, $14, $15
-  .byte $16, $17, $18, $19
-  .byte $01, $0D, $1B, $00
 
 PALETTES:
   ; Background Palette

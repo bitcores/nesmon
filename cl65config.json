@@ -1,0 +1,5 @@
+{
+  "executable": "C:\\Data\\#Programming\\famicom\\cc65\\bin\\cl65",
+  "input": "nesmon.s",
+  "params": "--verbose --target nes -o nesmon.nes"
+}
