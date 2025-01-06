@@ -155,7 +155,7 @@ load_palettes:  LDA PPUSTATUS
                 STA PPUSCROLL
                 LDA #%10000000	; Enable NMI
                 STA PPUCTRL
-                LDA #%00011010	; Enable sprites and background
+                LDA #%00001010	; Enable sprites and background
                 STA PPUMASK
 
 ;; initialize keyboard
