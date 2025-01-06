@@ -13,7 +13,7 @@
   ;; When the processor first turns on or is reset, it will jump to the label reset:
   .addr RESET
   ;; External interrupt IRQ (unused)
-  .addr 0
+  .addr IRQ
 
 ; "nes" linker config requires a STARTUP section, even if it's empty
 .segment "STARTUP"
@@ -39,14 +39,16 @@ MODE            = $2B           ;  $00=XAM, $7F=STOR, $AE=BLOCK XAM
 VSCROLLL        = $2C           ;  vertical scroll value low
 VSCROLLH        = $2D           ;  vertical scroll value high
 VSCROLLY        = $2E           ;  vertical scroll y value
-YIN             = $30           ;  Y-index of Input buffer
-YOUT            = $31           ;  Y-index of Display buffer
-kbdetect        = $32           ;  00 if joypad, 01 if fami keyboard, 02 if keyboard host
-kbinput         = $33
-mseinput        = $34
-kbreadp         = $35           ; pointer for reading from kbread buffer
-kbread          = $36
-mseread         = $3A
+READY           = $2F           ;  NMI ready flag
+ROW             = $30           ;  row number
+YIN             = $31           ;  Y-index of Input buffer
+YOUT            = $32           ;  Y-index of Display buffer
+kbdetect        = $33           ;  00 if joypad, 01 if fami keyboard, 02 if keyboard host
+kbinput         = $34           ;  keyboard read byte
+mseinput        = $35           ;  mouse read byte
+kbreadp         = $36           ;  pointer for reading from kbread buffer
+kbread          = $37           ;  keyboard buffered input
+mseread         = $3B           ;  mouse read input
 fkbtemp         = $3F
 
 
@@ -70,18 +72,19 @@ JOYPAD2         = $4017
 
 RESET:          SEI
                 CLD             ; Clear decimal arithmetic mode.
-                CLI
                 LDX #$40        
-                STX $4017	; disable APU frame IRQ
-                LDX #$ff 	; Set up stack
-                TXS 		;  Set stack pointer to $FF
-                LDX #$00
-                STX PPUCTRL	; disable NMI
-                STX PPUMASK ; disable rendering
-                STX $4010 	; disable DMC IRQs
+                STX $4017       ; disable APU frame IRQ
+                LDX #$FF        ; Set up stack
+                TXS             ; Set stack pointer to $FF
+                INX
+                STX PPUCTRL     ; disable NMI
+                STX PPUMASK     ; disable rendering
+                STX $4010       ; disable DMC IRQs
                 
 ;; first wait for vblank to make sure PPU is ready
-                JSR VBWAIT
+                BIT PPUSTATUS
+                : BIT PPUSTATUS
+                BPL :-
 
 clear_ram:      LDA #$00
                 STA $0000, x
@@ -91,22 +94,29 @@ clear_ram:      LDA #$00
                 STA $0500, x
                 STA $0600, x
                 STA $0700, x
-                STA $6000, x
                 LDA #$FE
                 STA $0200, x
                 INX
                 BNE clear_ram
 
 ;; second wait for vblank, PPU is ready after this
-                JSR VBWAIT
+                : BIT PPUSTATUS
+                BPL :-
 
-                LDA #$00 	; Set SPR-RAM address to 0
-                STA OAMADDR
-                LDA #$02  ; Set OAMDMA address to $0200
-                STA OAMDMA
+;; load palettes within vblank to hide visible stripes
+load_palettes:  LDA #$3F
+                STA PPUADDR
+                LDA #$00
+                STA PPUADDR
+                LDX #$00
+                : LDA PALETTES, x
+                STA PPUDATA
+                INX
+                CPX #$20
+                BNE :-
 
 ;; clear out the nametable/attribute RAM
-                LDA PPUSTATUS
+                BIT PPUSTATUS
                 LDA #$20
                 STA PPUADDR
                 LDA #$00
@@ -120,18 +130,7 @@ clear_ram:      LDA #$00
                 DEY
                 BNE :--
 
-load_palettes:  LDA PPUSTATUS
-                LDA #$3f
-                STA PPUADDR
-                LDA #$00
-                STA PPUADDR
-                LDX #$00
-                : LDA PALETTES, x
-                STA PPUDATA
-                INX
-                CPX #$20
-                BNE :-
-
+;; load CHR-RAM data
                 LDA #<TILEDATA
                 STA $00
                 LDA #>TILEDATA
@@ -140,7 +139,7 @@ load_palettes:  LDA PPUSTATUS
                 STY PPUMASK
                 STY PPUADDR
                 STY PPUADDR
-                LDX #$04  ; store up to 4x 256B pages
+                LDX #$04        ; store up to 4x 256B pages
                 : LDA ($00),y
                 STA PPUDATA
                 INY
@@ -155,18 +154,15 @@ load_palettes:  LDA PPUSTATUS
                 STA PPUSCROLL
                 LDA #%10000000	; Enable NMI
                 STA PPUCTRL
-                LDA #%00001010	; Enable sprites and background
-                STA PPUMASK
 
 ;; initialize keyboard
 JSR KEYBOARD::INIT
 
-;; ready to start mon
-                
+;; ready to start mon        
 NESMON:         LDY #$1F
-                LDA #$23        ; set the VSCROLL start
+                LDA #$20        ; set the VSCROLL start
                 STA VSCROLLH
-                LDA #$81
+                LDA #$01
                 STA VSCROLLL
 NOTCR:          CMP #$88        ; Backspace?
                 BEQ BACKSPACE   ; Yes.
@@ -183,7 +179,7 @@ BACKSPACE:      DEY             ; Back up text index.
                 BMI GETLINE     ; Beyond start of line, reinitialize.
 NEXTCHAR:       JSR KEYBOARD::KBDREADY ; Key ready?
                 BPL NEXTCHAR    ; Loop until ready
-                JSR KEYBOARD::KBDREAD ; Load character
+                JSR KEYBOARD::READKBD ; Load character
                 STA IN,Y
                 JSR ECHO
                 CMP #$8D
@@ -276,7 +272,7 @@ PRBYTE:         PHA             ; Save A for LSD.
                 JSR PRHEX       ; Output hex digit.
                 PLA             ; Restore A.
 PRHEX:          AND #$0F        ; Mask LSD for hex print.
-                ORA #$B0        ; Add "0"
+                ORA #'0'+$80    ; Add "0"
                 CMP #$BA        ; Digit?
                 BCC ECHO        ; Yes, output it.
                 ADC #$06        ; Add offset for letter.
@@ -285,7 +281,11 @@ ECHO:           STY YIN
                 STA DSP,Y
                 INY
                 JSR VBWAIT
-                STY YOUT
+                CPY #$1E        ; when running a program that will print to the screen
+                BMI :+          ; check if line reaches max length and move to a new
+                  JSR CLEARLINE ; line if necessary
+                  LDY #$00
+                :STY YOUT
                 LDY YIN
                 RTS             ; Return.
                 ;; ECHO needs to be used to push characters into the frame layout
@@ -293,62 +293,75 @@ ECHO:           STY YIN
                 BRK             ; unused
                 BRK             ; unused
 
-VBWAIT:         BIT PPUSTATUS   ; wait for v-blank after ECHO
-                BPL VBWAIT
+;; PPUSTATUS bit 7 is unreliable for vblank detection
+;; use a flag in RAM instead, so the NMI handler knows it's safe to run
+VBWAIT:         SEC             ; set NMI ready flag
+                ROR READY
+                : BIT READY      ; and wait until the NMI handler clears it
+                BMI :-
                 RTS
 
-NMI:            ; push contents of flags, and registers onto stack
-                PHP
-                PHA
+NMI:            BIT READY       ; abort if not ready yet
+                BPL IRQ
+          
+                PHA         ; push contents of flags, and registers onto stack
                 TXA
                 PHA
                 TYA
                 PHA
                 
+                ; not using sprites, so no OAM DMA or sprite enable
+                LDA #%00001010	; Enable background
+                STA PPUMASK
+
+;; transfer DSP contents to the PPU nametable
                 LDY #$00
-                LDA PPUSTATUS
+                BIT PPUSTATUS
                 LDA VSCROLLH    
                 STA PPUADDR
                 LDA VSCROLLL
-                STA PPUADDR          
-                :LDA DSP,Y
+                STA PPUADDR
+
+                : LDA DSP,Y
                 INY
                 CMP #$8D
                 BEQ :-
                 JSR KEYBOARD::CONVASCII
                 STA PPUDATA
-                CPY #$20
-                BNE :-
+                CPY #$1E
+                BMI :-
 
-                ; clear the next line as well before scrolling
-                LDA PPUSTATUS
-                CLC
-                TYA
-                ADC VSCROLLL
-                TAY
+;; clear an extra line after the input display so the vertical mirroring isn't apparent on the bottom row
                 LDA VSCROLLH
-                ADC #$00
-                CMP #$23  ; check if we have to scroll to first line
-                BCC :+
-                CPY #$C0
-                BCC :+
-                LDA #$20  ; set first line
-                LDY #$01
-                :STA PPUADDR
-                TYA
-                STA PPUADDR
-                LDY #$20
-                LDA #$00
-                :STA PPUDATA
-                INY
-                CPY #$40
-                BNE :-
+                PHA
+                LDA VSCROLLL
+                PHA
+                JSR INCVSCROLL
 
-                LDA PPUSTATUS
-                LDA #$00        ; set scroll
-                STA PPUSCROLL
+                BIT PPUSTATUS
+                LDA VSCROLLH
+                STA PPUADDR
+                LDA VSCROLLL
+                STA PPUADDR
+
+                LDA #$00
+                TAX
+                LDY #$1D
+                : STA PPUDATA
+                DEY
+                BPL :-
+
+                PLA
+                STA VSCROLLL
+                PLA
+                STA VSCROLLH
+
+                BIT PPUSTATUS
+                STX PPUSCROLL   ; set scroll
                 LDA VSCROLLY
                 STA PPUSCROLL
+                LDA #%10000000	; select nametable and keep NMI enabled
+                STA PPUCTRL
 
                 ; restore contents of flags and registers from stack
                 PLA
@@ -356,28 +369,41 @@ NMI:            ; push contents of flags, and registers onto stack
                 PLA
                 TAX
                 PLA
-                PLP
 
+                ASL READY       ; clear NMI ready flag
+IRQ:
                 RTI
 
-CLEARLINE:      JSR VBWAIT      ; wait for v-blank
-                STY YIN
+CLEARLINE:      STY YIN   ; save the y value for IN
+                ; increase the vscroll
                 JSR INCVSCROLL
-                CLC
+
+;; keep the vertical scroll fixed until we reach row $1d, to simulate the original Apple 1 terminal
+;; this also ensures that the text display is mostly within the "action safe" area
+;; see: https://www.nesdev.org/wiki/Overscan
+                INC ROW
+                LDA #$1C
+                CMP ROW
+                BCS :+
+                STA ROW
                 LDA #$08
                 ADC VSCROLLY
                 CMP #$F0
                 BCC SKIPOVER
                 LDA #$00
 SKIPOVER:       STA VSCROLLY
-                ; clear IN so it will write a blank line
-                LDA #$00
-                LDY #$41
-                :DEY
-                STA DSP,Y 
-                BNE :-
+                ; clear DSP so it will write a blank line
+                : LDA #$00
+                LDY #$20
+                : STA DSP,Y
+                DEY
+                BPL :-
+                TAY             ; return "cursor" to the start
                 STY YOUT
-                LDY YIN
+
+                JSR VBWAIT      ; wait for v-blank
+
+                LDY YIN         ; restore the y value for IN
                 RTS
 
 INCVSCROLL:     LDA VSCROLLH
@@ -395,11 +421,11 @@ INCVSCROLLL:    CLC
                 LDA #$20
                 ADC VSCROLLL
                 STA VSCROLLL
-                BCS INCVSCROLLH
-                RTS
+                BCC :+
 INCVSCROLLH:    INC VSCROLLH
-                RTS
+                : RTS
 
+.segment "RODATA"
 
 PALETTES:
   ; Background Palette
@@ -414,5 +440,4 @@ PALETTES:
   .byte $0F, $1A, $00, $00
   .byte $0F, $34, $00, $00
 
-.segment "RODATA"
 TILEDATA: .incbin "./chars.chr"
