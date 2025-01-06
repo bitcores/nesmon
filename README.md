@@ -6,3 +6,14 @@ Joypad controls have been **removed**. A fork that uses Joypad for input can be 
 Input is now done through either a Family Basic Keyboard or using a compatible Keyboard Mouse Host interface (like pico-usbfamikb)
 
 ![](images/example.png)
+
+An imperfect version of the Test Program can be run by entering the following code
+```
+0: A9 b 0 b AA b 20 b 18 b 83 b E8 b 8A (RET)
+8: 4C b 2 b 0 (RET)
+0 (RET)
+R (RET)
+```
+b means blank or space; and (RET) hit the "return" key on the keyboard
+
+It doesn't align properly due to window width and missing characters, but it works.
