@@ -142,7 +142,7 @@
         LDY $0D     ; restore Y
         RTS
 
-    KBDREAD:
+    READKBD:
     ; we know there is something in the buffer, at least one character,
     ; and the pointer should be pointing at it already
     ; can be buffer the family keyboard keys in the same place?
@@ -265,35 +265,37 @@
     RETCHR:
         RTS
 
-
-    FBKBMAP: ; this maps the family keyboard to ascii values; ignore $00
-  .byte $5D, $5B, $0D, $00, $00, $00, $00, $00 ; row 0
-  .byte $3B, $3A, $40, $00, $5E, $2D, $2F, $5F ; row 1
-  .byte $4B, $4C, $4F, $00, $30, $50, $2C, $2E ; row 2
-  .byte $4A, $55, $49, $00, $38, $39, $4E, $4D ; row 3
-  .byte $48, $47, $59, $00, $36, $37, $56, $42 ; row 4
-  .byte $44, $52, $54, $00, $34, $35, $43, $46 ; row 5
-  .byte $41, $53, $57, $00, $33, $45, $5A, $58 ; row 6
-  .byte $00, $51, $1B, $00, $32, $31, $00, $00 ; row 7
-  .byte $00, $00, $00, $00, $00, $08, $20, $00 ; row 8
-
-    KBMHOSTMAP: ; this maps the input values to the ascii values; ignore $00
-    ; wozmon expects key releases to be returned +0x80
-  .byte $00, $00, $00, $00, $41, $42, $43, $44 ; 00 - 07
-  .byte $45, $46, $47, $48, $49, $4A, $4B, $4C ; 08 - 0F
-  .byte $4D, $4E, $4F, $50, $51, $52, $53, $54 ; 10 - 17
-  .byte $55, $56, $57, $58, $59, $5A, $31, $32 ; 18 - 1F
-  .byte $33, $34, $35, $36, $37, $38, $39, $30 ; 20 - 27
-  .byte $0D, $1B, $08, $00, $20, $2D, $3D, $5B ; 28 - 2F
-  .byte $5D, $5C, $00, $3B, $27, $00, $2C, $2E ; 30 - 37
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 38 - 3F
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 40 - 47
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 48 - 4F
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 50 - 57
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 58 - 5F
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 60 - 67
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 68 - 6F
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 70 - 77
-  .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 78 - 7F
-
 .endproc
+
+.segment "RODATA"
+
+FBKBMAP: ; this maps the family keyboard to ascii values; ignore $00
+    .byte $5D, $5B, $0D, $00, $00, $00, $00, $00 ; row 0
+    .byte $3B, $3A, $40, $00, $5E, $2D, $2F, $5F ; row 1
+    .byte $4B, $4C, $4F, $00, $30, $50, $2C, $2E ; row 2
+    .byte $4A, $55, $49, $00, $38, $39, $4E, $4D ; row 3
+    .byte $48, $47, $59, $00, $36, $37, $56, $42 ; row 4
+    .byte $44, $52, $54, $00, $34, $35, $43, $46 ; row 5
+    .byte $41, $53, $57, $00, $33, $45, $5A, $58 ; row 6
+    .byte $00, $51, $1B, $00, $32, $31, $00, $00 ; row 7
+    .byte $00, $00, $00, $00, $00, $08, $20, $00 ; row 8
+
+KBMHOSTMAP: ; this maps the input values to the ascii values; ignore $00
+            ; wozmon expects key releases to be returned +0x80
+    .byte $00, $00, $00, $00, $41, $42, $43, $44 ; 00 - 07
+    .byte $45, $46, $47, $48, $49, $4A, $4B, $4C ; 08 - 0F
+    .byte $4D, $4E, $4F, $50, $51, $52, $53, $54 ; 10 - 17
+    .byte $55, $56, $57, $58, $59, $5A, $31, $32 ; 18 - 1F
+    .byte $33, $34, $35, $36, $37, $38, $39, $30 ; 20 - 27
+    .byte $0D, $1B, $08, $00, $20, $2D, $3D, $5B ; 28 - 2F
+    .byte $5D, $5C, $00, $3B, $27, $00, $2C, $2E ; 30 - 37
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 38 - 3F
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 40 - 47
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 48 - 4F
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 50 - 57
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 58 - 5F
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 60 - 67
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 68 - 6F
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 70 - 77
+    .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 78 - 7F
+    
