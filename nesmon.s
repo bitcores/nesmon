@@ -1,8 +1,11 @@
+.include "keyboard.s"
+
 .segment "HEADER"
-  .byte "NES", $1A ; iNES header identifier
-  .byte $01        ; 1x 16KB PRG code
-  .byte $00        ; 0x  8KB CHR data
-  .byte $A9, $D0   ; mapper 218, "Single-screen, BLK1" config: https://www.nesdev.org/wiki/INES_Mapper_218
+  ; .byte "NES", $1A      ; iNES header identifier
+  .byte $4E, $45, $53, $1A
+  .byte $02               ; 2x 16KB PRG code
+  .byte $00               ; 0x  8KB CHR data
+  .byte $A9, $D0        ; mapper 0, vertical mirroring
 
 .segment "VECTORS"
   ;; When an NMI happens (once per frame if enabled) the label nmi:
@@ -12,15 +15,18 @@
   ;; External interrupt IRQ (unused)
   .addr IRQ
 
+; "nes" linker config requires a STARTUP section, even if it's empty
+.segment "STARTUP"
+
 ; Main code segment for the program
 .segment "CODE"
+
 
 ;  The WOZ Monitor for the Apple 1
 ;  Written by Steve Wozniak in 1976
 
 
 ; Page 0 Variables
-
 XAML            = $24           ;  Last "opened" location Low
 XAMH            = $25           ;  Last "opened" location High
 STL             = $26           ;  Store address Low
@@ -33,21 +39,22 @@ MODE            = $2B           ;  $00=XAM, $7F=STOR, $AE=BLOCK XAM
 VSCROLLL        = $2C           ;  vertical scroll value low
 VSCROLLH        = $2D           ;  vertical scroll value high
 VSCROLLY        = $2E           ;  vertical scroll y value
-buttons         = $2F           ;  current buttons value
-lastbuttons     = $30           ;  last buttons value
+READY           = $2F           ;  NMI ready flag
+ROW             = $30           ;  row number
 YIN             = $31           ;  Y-index of Input buffer
 YOUT            = $32           ;  Y-index of Display buffer
-READY           = $33           ;  NMI ready flag
-ROW             = $34           ;  row number
+kbdetect        = $33           ;  00 if joypad, 01 if fami keyboard, 02 if keyboard host
+kbinput         = $34           ;  keyboard read byte
+mseinput        = $35           ;  mouse read byte
+kbreadp         = $36           ;  pointer for reading from kbread buffer
+kbread          = $37           ;  keyboard buffered input
+mseread         = $3B           ;  mouse read input
+fkbtemp         = $3F
 
 
 ; Other Variables
-
 IN              = $0300         ;  Input buffer to $031E ; $0200 is OAM by convention
-DSPBUF          = $0320         ;  Display buffer to $033E
-KEYPTR          = $031E         ;  pointer for the keymap
-INBUF           = $031F         ;  currently modified character
-
+DSP             = $0320         ;  Display buffer to $033E
 PPUCTRL         = $2000
 PPUMASK         = $2001
 PPUSTATUS       = $2002
@@ -58,26 +65,21 @@ PPUADDR         = $2006
 PPUDATA         = $2007
 OAMDMA          = $4014
 JOYPAD1         = $4016
+JOYPAD2         = $4017
 
-BUTTON_A        = 1 << 7
-BUTTON_B        = 1 << 6
-BUTTON_SELECT   = 1 << 5
-BUTTON_START    = 1 << 4
-BUTTON_UP       = 1 << 3
-BUTTON_DOWN     = 1 << 2
-BUTTON_LEFT     = 1 << 1
-BUTTON_RIGHT    = 1 << 0
+
+               .export RESET
 
 RESET:          SEI
                 CLD             ; Clear decimal arithmetic mode.
                 LDX #$40        
-                STX $4017	    ; disable APU frame IRQ
-                LDX #$ff 	    ; Set up stack
-                TXS 		    ;  Set stack pointer to $FF
+                STX $4017       ; disable APU frame IRQ
+                LDX #$FF        ; Set up stack
+                TXS             ; Set stack pointer to $FF
                 INX
-                STX PPUCTRL	    ; disable NMI
+                STX PPUCTRL     ; disable NMI
                 STX PPUMASK     ; disable rendering
-                STX $4010 	    ; disable DMC IRQs
+                STX $4010       ; disable DMC IRQs
                 
 ;; first wait for vblank to make sure PPU is ready
                 BIT PPUSTATUS
@@ -102,7 +104,7 @@ clear_ram:      LDA #$00
                 BPL :-
 
 ;; load palettes within vblank to hide visible stripes
-load_palettes:  LDA #$3f
+load_palettes:  LDA #$3F
                 STA PPUADDR
                 LDA #$00
                 STA PPUADDR
@@ -153,66 +155,59 @@ load_palettes:  LDA #$3f
                 LDA #%10000000	; Enable NMI
                 STA PPUCTRL
 
-;; ready to start mon
-                LDY #$1F
+;; initialize keyboard
+JSR KEYBOARD::INIT
+
+;; ready to start mon        
+NESMON:         LDY #$1F
                 LDA #$20        ; set the VSCROLL start
                 STA VSCROLLH
                 LDA #$01
                 STA VSCROLLL
-NOTCR:          CMP #$02        ; ESC?
+NOTCR:          CMP #$88        ; Backspace?
+                BEQ BACKSPACE   ; Yes.
+                CMP #$9B        ; ESC?
                 BEQ ESCAPE      ; Yes.
-                                ; only advance text index if input was A button
-                ;INY            ; Advance text index.
+                INY            ; Advance text index.
                 CPY #$1E        ; compare with 30
                 BMI NEXTCHAR    ; Auto ESC if > 30.
-ESCAPE:         JSR CLEARLINE
-                LDA #$02        ; "\" how about /
-                STA INBUF
+ESCAPE:         LDA #'\'+$80    ; "\".
                 JSR ECHO        ; Output it.
 GETLINE:        JSR CLEARLINE   ;
                 LDY #$01        ; Initialize text index.
 BACKSPACE:      DEY             ; Back up text index.
                 BMI GETLINE     ; Beyond start of line, reinitialize.
-NEXTCHAR:       JSR VBWAIT      ; Read the joypad for button presses
-                LDA buttons
-                CMP lastbuttons
-                BEQ NEXTCHAR    ; Loop until ready.
-                JSR PROCESSJOY  ; process the input
+NEXTCHAR:       JSR KEYBOARD::KBDREADY ; Key ready?
+                BPL NEXTCHAR    ; Loop until ready
+                JSR KEYBOARD::READKBD ; Load character
+                STA IN,Y
+                JSR ECHO
                 CMP #$8D
                 BNE NOTCR       ; No.
                 LDY #$FF        ; Reset text index.
                 LDA #$00        ; For XAM mode.
                 TAX             ; 0->X.
 SETSTOR:        ASL             ; Leaves $7B if setting STOR mode.
-                ASL
-                ASL
-                ASL
-SETBLKM:        ROR
 SETMODE:        STA MODE        ; $00=XAM $7B=STOR $AE=BLOK XAM
 BLSKIP:         INY             ; Advance text index.
-                STY YIN
-NEXTITEM:       LDY YIN
-                LDA IN,Y        ; Get character.
+NEXTITEM:       LDA IN,Y        ; Get character.
                 CMP #$8D        ; CR?
                 BEQ GETLINE     ; Yes, done this line.
-                CMP #$01        ; "."?
+                CMP #'.'+$80    ; "."?
                 BCC BLSKIP      ; Skip delimiter.
-                BEQ SETBLKM     ; Yes. Set STOR mode.
-                CMP #$0D        ; ":"?
+                BEQ SETMODE     ; Yes. Set STOR mode.
+                CMP #';'+$80    ; ":"? change once SHIFT mode added
                 BEQ SETSTOR     ; Yes. Set STOR mode.
-                CMP #$1B        ; "R"?
+                CMP #'R'+$80        ; "R"?
                 BEQ RUN         ; Yes. Run user program.
                 STX L           ; $00-> L.
                 STX H           ; and H.
                 STY YSAV        ; Save Y for comparison.
 NEXTHEX:        LDA IN,Y        ; Get character for hex test.
-                SEC
-                SBC #$03        ; Map digits to $0-9.
+                EOR #$B0        ; Map digits to $0-9.
                 CMP #$0A        ; Digit?
                 BCC DIG         ; Yes.
-                SBC #$06
-                SEC
-                ADC #$EE        ; Map letter "A"-"F" to $FA-FF.
+                ADC #$88        ; Map letter "A"-"F" to $FA-FF.
                 CMP #$FA        ; Hex letter?
                 BCC NOTHEX      ; No, character not hex.
 DIG:            ASL
@@ -225,8 +220,7 @@ HEXSHIFT:       ASL             ; Hex digit left, MSB to carry.
                 ROL H           ;  Rotate into MSD’s.
                 DEX             ; Done 4 shifts?
                 BNE HEXSHIFT    ; No, loop.
-                INY             ; Advance text index.
-                STY YIN             
+                INY             ; Advance text index.          
                 BNE NEXTHEX     ; Always taken. Check next char for hex.
 NOTHEX:         CPY YSAV        ; Check if L, H empty (no hex digits).
                 BEQ ESCAPE      ; Yes, generate ESC sequence.
@@ -252,11 +246,9 @@ NXTPRNT:        BNE PRDATA      ; NE means no address to print.
                 JSR PRBYTE      ; Output it in hex format.
                 LDA XAML        ; Low-order ‘examine index’ byte.
                 JSR PRBYTE      ; Output it in hex format.
-                LDA #$0D        ; ":".
-                STA INBUF
+                LDA #':'+$80        ; ":".
                 JSR ECHO        ; Output it.
-PRDATA:         LDA #$00        ; Blank.
-                STA INBUF
+PRDATA:         LDA #$A0        ; Blank.
                 JSR ECHO        ; Output it.
                 LDA (XAML,X)    ; Get data byte at ‘examine index’.
                 JSR PRBYTE      ; Output it in hex format.
@@ -280,25 +272,26 @@ PRBYTE:         PHA             ; Save A for LSD.
                 JSR PRHEX       ; Output hex digit.
                 PLA             ; Restore A.
 PRHEX:          AND #$0F        ; Mask LSD for hex print.
-                CLC             
-                ADC #$03        ; Add 3 to shift.
-                STA INBUF
-                CMP #$0D        ; Digit?
+                ORA #'0'+$80    ; Add "0"
+                CMP #$BA        ; Digit?
                 BCC ECHO        ; Yes, output it.
                 ADC #$06        ; Add offset for letter.
-                STA INBUF
 ECHO:           STY YIN
                 LDY YOUT
-                LDA INBUF       ; load the character from inbuf
-                STA DSPBUF, Y   ; store the character in DSPBUF for output
+                STA DSP,Y
                 INY
                 JSR VBWAIT
-                LDA #$00
-                STA INBUF
-                STY YOUT
+                CPY #$1E        ; when running a program that will print to the screen
+                BMI :+          ; check if line reaches max length and move to a new
+                  JSR CLEARLINE ; line if necessary
+                  LDY #$00
+                :STY YOUT
                 LDY YIN
                 RTS             ; Return.
                 ;; ECHO needs to be used to push characters into the frame layout
+
+                BRK             ; unused
+                BRK             ; unused
 
 ;; PPUSTATUS bit 7 is unreliable for vblank detection
 ;; use a flag in RAM instead, so the NMI handler knows it's safe to run
@@ -310,68 +303,65 @@ VBWAIT:         SEC             ; set NMI ready flag
 
 NMI:            BIT READY       ; abort if not ready yet
                 BPL IRQ
-                
-                PHA             ; push contents of registers onto stack
+          
+                PHA         ; push contents of flags, and registers onto stack
                 TXA
                 PHA
                 TYA
                 PHA
                 
-                LDY #$00 	    ; Set SPR-RAM address to 0
-                STY OAMADDR
-                LDA #$02        ; Set OAMDMA address to $0200
-                STA OAMDMA
-                LDA #%00011110	; Enable sprites and background
+                ; not using sprites, so no OAM DMA or sprite enable
+                LDA #%00001010	; Enable background
                 STA PPUMASK
-                
-;; transfer DSPBUF contents to the PPU nametable
+
+;; transfer DSP contents to the PPU nametable
+                LDY #$00
                 BIT PPUSTATUS
-                LDA VSCROLLH
+                LDA VSCROLLH    
                 STA PPUADDR
                 LDA VSCROLLL
                 STA PPUADDR
-                
-                : LDA DSPBUF, Y  ; enters with Y = 0
+
+                : LDA DSP,Y
                 INY
                 CMP #$8D
                 BEQ :-
+                JSR KEYBOARD::CONVASCII
                 STA PPUDATA
                 CPY #$1E
-                BNE :-
-                
+                BMI :-
+
 ;; clear an extra line after the input display so the vertical mirroring isn't apparent on the bottom row
                 LDA VSCROLLH
                 PHA
                 LDA VSCROLLL
                 PHA
                 JSR INCVSCROLL
-                
+
                 BIT PPUSTATUS
                 LDA VSCROLLH
                 STA PPUADDR
                 LDA VSCROLLL
                 STA PPUADDR
-                
+
                 LDA #$00
                 TAX
-                LDY #$1d
+                LDY #$1D
                 : STA PPUDATA
                 DEY
                 BPL :-
-                
+
                 PLA
                 STA VSCROLLL
                 PLA
                 STA VSCROLLH
 
-                BIT PPUSTATUS   
+                BIT PPUSTATUS
                 STX PPUSCROLL   ; set scroll
                 LDA VSCROLLY
                 STA PPUSCROLL
                 LDA #%10000000	; select nametable and keep NMI enabled
                 STA PPUCTRL
-                
-                JSR READJOY
 
                 ; restore contents of flags and registers from stack
                 PLA
@@ -379,73 +369,10 @@ NMI:            BIT READY       ; abort if not ready yet
                 PLA
                 TAX
                 PLA
-                
+
                 ASL READY       ; clear NMI ready flag
 IRQ:
                 RTI
-
-READJOY:        LDA #$00
-                STA JOYPAD1
-                LDA #$01
-                STA JOYPAD1
-                STA buttons
-                LSR A
-                STA JOYPAD1
-                : LDA JOYPAD1
-                LSR A
-                ROL buttons
-                BCC :-
-                RTS
-
-PROCESSJOY:     STA lastbuttons
-                AND #BUTTON_DOWN
-                BEQ JOYNOTDOWN
-                INC KEYPTR
-                JSR KEYSET                
-                JMP JOYSAME
-JOYNOTDOWN:     LDA lastbuttons
-                AND #BUTTON_UP
-                BEQ JOYNOTUP
-                DEC KEYPTR
-                JSR KEYSET
-                JMP JOYSAME
-JOYNOTUP:       LDA lastbuttons
-                AND #BUTTON_A
-                BEQ JOYNOTA
-                LDA INBUF
-                STA IN, Y
-                INY
-                STA DSPBUF, Y
-                JMP JOYSAME
-JOYNOTA:        LDA lastbuttons
-                AND #BUTTON_B
-                BEQ JOYNOTB
-                LDA #$00
-                STA DSPBUF, Y
-                DEY
-                LDA IN, Y
-                STA INBUF
-                JMP JOYBOUNDS
-JOYNOTB:        LDA lastbuttons
-                AND #BUTTON_START
-                BEQ JOYNOTSTART
-                LDA INBUF
-                STA IN, Y
-                INY
-                LDA #$8D
-                STA IN, Y
-                JMP JOYSAME
-JOYNOTSTART:    LDA lastbuttons
-                AND #BUTTON_SELECT
-                BEQ JOYSAME
-                LDA #$02
-                JMP JOYSAME
-JOYBOUNDS:      CPY #$00
-                BPL JOYSAME
-JOYNEG:         LDA #$00
-                TAY
-JOYSAME:        RTS
-
 
 CLEARLINE:      STY YIN   ; save the y value for IN
                 ; increase the vscroll
@@ -455,7 +382,7 @@ CLEARLINE:      STY YIN   ; save the y value for IN
 ;; this also ensures that the text display is mostly within the "action safe" area
 ;; see: https://www.nesdev.org/wiki/Overscan
                 INC ROW
-                LDA #$1c
+                LDA #$1C
                 CMP ROW
                 BCS :+
                 STA ROW
@@ -465,19 +392,17 @@ CLEARLINE:      STY YIN   ; save the y value for IN
                 BCC SKIPOVER
                 LDA #$00
 SKIPOVER:       STA VSCROLLY
-                ; clear DSPBUF so it will write a blank line
+                ; clear DSP so it will write a blank line
                 : LDA #$00
                 LDY #$20
-                : STA DSPBUF, Y
+                : STA DSP,Y
                 DEY
                 BPL :-
                 TAY             ; return "cursor" to the start
                 STY YOUT
-                STA KEYPTR      ; reset key pointer
-                JSR KEYSET
 
                 JSR VBWAIT      ; wait for v-blank
-                
+
                 LDY YIN         ; restore the y value for IN
                 RTS
 
@@ -500,34 +425,7 @@ INCVSCROLLL:    CLC
 INCVSCROLLH:    INC VSCROLLH
                 : RTS
 
-KEYSET:         TYA
-                PHA
-                LDY KEYPTR
-                CPY #$14
-                BCC LOADKEY
-                LDA #$00
-                CPY #$FE
-                BCC PTRL
-                LDA #$13
-PTRL:           TAY
-LOADKEY:        LDA KEYMAP, Y
-                STA INBUF
-                STY KEYPTR
-                PLA
-                TAY
-                LDA INBUF
-                STA DSPBUF, Y
-                RTS
-
 .segment "RODATA"
-
-; Key Map
-KEYMAP:
-  .byte $03, $04, $05, $06
-  .byte $07, $08, $09, $0A
-  .byte $0B, $0C, $14, $15
-  .byte $16, $17, $18, $19
-  .byte $01, $0D, $1B, $00
 
 PALETTES:
   ; Background Palette
@@ -543,4 +441,3 @@ PALETTES:
   .byte $0F, $34, $00, $00
 
 TILEDATA: .incbin "./chars.chr"
-
