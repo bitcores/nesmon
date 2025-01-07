@@ -28,13 +28,13 @@
 ;; next, try keyboard mouse host
     KBMHOST: JSR READKBMH
         LDA mseread
-        AND #$16 ; sets 0 if not 0x16
+        AND #$16                ; sets 0 if not 0x16
         BEQ WAIT4INIT
         LDA #$02
         JMP ENDINIT
 
     WAIT4INIT:
-        JSR VBWAIT ; keep waiting until keyboard found
+        JSR VBWAIT              ; keep waiting until keyboard found
         JMP INIT
 
     ENDINIT:
@@ -75,18 +75,30 @@
             STY $1D
             LDA kbinput
             AND #$80
-            STA $1F     ; store up/down status
+            STA $1F             ; store up/down status
             CMP #$00 
             LDA kbinput
             BEQ :+
-            AND #$7F    ; get usb code
+            AND #$7F            ; get usb code
+            CMP #$78
+            BCC :+
+            JSR SETMODKEYS
             :TAY
             LDA KBMHOSTMAP, Y   ; load ascii code
             CMP #$00
-            BEQ :+      ; if the code is invalid, don't restore
-            CLC
-            ADC $1F     ; restore status
-            :LDY $1D
+            BEQ STOREASCII      ; if the code is invalid, don't restore
+            CMP #';'            ; we are only looking to mod ; right now, create subroutine for more handling
+            BNE :+
+            PHA
+            LDA kbmodkey
+            AND #$22            ; is any shift key held?
+            TAY
+            PLA
+            CPY #$00
+            BEQ :+
+            LDA #':'            ; could do math, just replace for now
+            :ORA $1F            ; restore status
+    STOREASCII:LDY $1D
             STA kbread, Y
             LDA mseinput
             STA mseread, Y
@@ -99,6 +111,32 @@
         PLP
         RTS
 
+;; set the status of the mod keys; shift, alt, ctrl
+    SETMODKEYS:
+        PHA                     ; save the keycode
+        SEC
+        SBC #$77                ; get an offset 1-8
+        TAY
+        SEC
+        LDA #$00
+        :ROL                    ; roll a bit into the right position
+        DEY
+        BNE :-
+        PHA
+        LDA $1F
+        AND #$80
+        BNE SUBMODKEY
+        PLA
+        ORA kbmodkey            ; if key down, set 1 in key position
+        JMP RETMODKEY
+    SUBMODKEY:
+        PLA
+        EOR kbmodkey            ; if key up, set 0 in key position
+    RETMODKEY:
+        STA kbmodkey
+        PLA
+    RTS
+
     ; return one key at a time, from buffer first or
     ; read keyboard input, return ascii in A
     ; maybe make a similar that returns usb codes
@@ -109,7 +147,7 @@
         LDY kbreadp
         LBUF:
             CPY #$04
-            BEQ REFBUFFER ; no release key in buffer
+            BEQ REFBUFFER       ; no release key in buffer
             LDA kbread, Y
             AND #$80
             BNE BUFREADY
@@ -122,14 +160,14 @@
         RTS 
 
     REFBUFFER:
-        LDA #$00    ; reset pointer index
+        LDA #$00                ; reset pointer index
         STA kbreadp
         LDA kbdetect
-        CMP #$01    ; is it family keyboard?
+        CMP #$01                ; is it family keyboard?
         BEQ REFFAMIKBD
-        CMP #$02    ; is it keyboard mouse host?
+        CMP #$02                ; is it keyboard mouse host?
         BEQ REFKBMH
-        JSR INIT    ; neither? init the keyboard again ?
+        JSR INIT                ; neither? init the keyboard again ?
         JMP NOTREADY
     REFFAMIKBD:
         JSR CLEARKBUF
@@ -138,8 +176,8 @@
     REFKBMH:
         JSR READKBMH
     NOTREADY:
-        LDA #$00    ; signal not ready this round
-        LDY $0D     ; restore Y
+        LDA #$00                ; signal not ready this round
+        LDY $0D                 ; restore Y
         RTS
 
     READKBD:
@@ -147,10 +185,10 @@
     ; and the pointer should be pointing at it already
     ; can be buffer the family keyboard keys in the same place?
         STY $0D
-        LDY kbreadp     ; load the pointer
-        LDA kbread, Y   ; load the character in butter
-        INY             ; advance the pointer
-        STY kbreadp     ; store the pointer
+        LDY kbreadp             ; load the pointer
+        LDA kbread, Y           ; load the character in butter
+        INY                     ; advance the pointer
+        STY kbreadp             ; store the pointer
         LDY $0D
         RTS
 
@@ -167,7 +205,7 @@
         TAY
         RTS
 
-    READFAMIKBD: PHP         ; let's store all the keyboard data in $50 ->
+    READFAMIKBD: PHP            ; let's store all the keyboard data in $50 ->
         TYA
         PHA
         TXA
@@ -175,14 +213,14 @@
 
         LDY #$00
         LDA #$05
-        STA $4016
+        STA $4016               ; strobe family keyboard for report
         NOP
         NOP
         NOP
         LDA #$04
         STA $0C
     readkeyboard:
-        STA $4016
+        STA $4016               
         NOP
         NOP
         NOP
@@ -190,47 +228,46 @@
         LSR
         CLC
         AND #$0F
-        STA fkbtemp         ; store in fkbtemp
-        CMP $50, Y          ; if same as history, ignore
+        STA fkbtemp             ; store in fkbtemp
+        CMP $50, Y              ; if same as history, ignore
         BEQ nextkeyboard  
-        LDA $50, Y          ; we want to check if a key has been released
-        ORA fkbtemp         ; get all 1 positions
-        EOR fkbtemp         ; get the released positions
+        LDA $50, Y              ; we want to check if a key has been released
+        ORA fkbtemp             ; get all 1 positions
+        EOR fkbtemp             ; get the released positions
 
         LDX #$04
     parsekeyboard:DEX
         LSR
-        BCC finishparse     ; if 0, skip
-        PHA                 ; backup kb data
-        TYA                 ; 
-        PHA                 ; and Y
-        ASL                 ; multiply by 4 to get word pos
+        BCC finishparse         ; if 0, skip
+        PHA                     ; backup kb data
+        TYA                     ; 
+        PHA                     ; and Y
+        ASL                     ; multiply by 4 to get word pos
         ASL
         STA $0F
         CLC
         TXA
-        ADC $0F             ; location of target character
+        ADC $0F                 ; location of target character
         TAY
         LDA FBKBMAP, Y
         CMP #$00
         BEQ restorekbdata
-        CLC
-        ADC #$80            ; store release code   
+        ORA #$80                ; convert to release code   
         LDY kbreadp         
-        CPY #$04            ; do we have four new keys in buffer already?
-        BEQ restorekbdata   ; we might lose key presses this way, rarely
+        CPY #$04                ; do we have four new keys in buffer already?
+        BEQ restorekbdata       ; we might lose key presses this way, rarely
         STA kbread, Y
         INY
         STY kbreadp
-    restorekbdata:PLA       ; restore kb data
+    restorekbdata:PLA           ; restore kb data
         TAY
         PLA
     finishparse:CPX #$00
         BNE parsekeyboard
     nextkeyboard:LDA fkbtemp 
-        STA $50, Y          ; store new keyboard values
+        STA $50, Y              ; store new keyboard values
         LDA $0C
-        EOR #$02
+        EOR #$02                ; flipflop the 2nd bit to switch column/row
         STA $0C
         INY
         CPY #$12
@@ -250,16 +287,15 @@
 
     CONVASCII: ; ascii values map directly to charmap;
         ; return blank for anything below A0
-        CMP #$88
+        CMP #$88                ; check for backspace
         BNE :+
-        LDA #$DF
+        LDA #$DF                ; print an underscore if backspace
         :CMP #$A0
         BCC :+
-        ; return blank for anything above E0
-        CMP #$E0
+        CMP #$E0                ; return blank for anything above E0
         BCS :+
         SEC
-        SBC #$A0    ; subtract A0 to get the character
+        SBC #$A0                ; subtract A0 to get the character
         JMP RETCHR
         : LDA #$00
     RETCHR:
@@ -298,4 +334,3 @@ KBMHOSTMAP: ; this maps the input values to the ascii values; ignore $00
     .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 68 - 6F
     .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 70 - 77
     .byte $00, $00, $00, $00, $00, $00, $00, $00 ; 78 - 7F
-    

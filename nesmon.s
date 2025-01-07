@@ -50,6 +50,7 @@ kbreadp         = $36           ;  pointer for reading from kbread buffer
 kbread          = $37           ;  keyboard buffered input
 mseread         = $3B           ;  mouse read input
 fkbtemp         = $3F
+kbmodkey        = $40           ;  modifier key status
 
 
 ; Other Variables
@@ -162,7 +163,7 @@ JSR KEYBOARD::INIT
 NESMON:         LDY #$1F
                 LDA #$20        ; set the VSCROLL start
                 STA VSCROLLH
-                LDA #$01
+                LDA #$21        ; start on second line for overscan reasons
                 STA VSCROLLL
 NOTCR:          CMP #$88        ; Backspace?
                 BEQ BACKSPACE   ; Yes.
@@ -195,10 +196,10 @@ NEXTITEM:       LDA IN,Y        ; Get character.
                 BEQ GETLINE     ; Yes, done this line.
                 CMP #'.'+$80    ; "."?
                 BCC BLSKIP      ; Skip delimiter.
-                BEQ SETMODE     ; Yes. Set STOR mode.
-                CMP #';'+$80    ; ":"? change once SHIFT mode added
+                BEQ SETMODE     ; Set BLOCK XAM mode.
+                CMP #':'+$80    ; ":"?
                 BEQ SETSTOR     ; Yes. Set STOR mode.
-                CMP #'R'+$80        ; "R"?
+                CMP #'R'+$80    ; "R"?
                 BEQ RUN         ; Yes. Run user program.
                 STX L           ; $00-> L.
                 STX H           ; and H.
@@ -246,7 +247,7 @@ NXTPRNT:        BNE PRDATA      ; NE means no address to print.
                 JSR PRBYTE      ; Output it in hex format.
                 LDA XAML        ; Low-order ‘examine index’ byte.
                 JSR PRBYTE      ; Output it in hex format.
-                LDA #':'+$80        ; ":".
+                LDA #':'+$80    ; ":".
                 JSR ECHO        ; Output it.
 PRDATA:         LDA #$A0        ; Blank.
                 JSR ECHO        ; Output it.
@@ -382,7 +383,7 @@ CLEARLINE:      STY YIN   ; save the y value for IN
 ;; this also ensures that the text display is mostly within the "action safe" area
 ;; see: https://www.nesdev.org/wiki/Overscan
                 INC ROW
-                LDA #$1C
+                LDA #$1B        ; reduce by 1 because we start on second row
                 CMP ROW
                 BCS :+
                 STA ROW
