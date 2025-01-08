@@ -354,7 +354,7 @@ NMI:            BIT READY       ; abort if not ready yet
 
                 LDA #$00
                 TAX
-                LDY #$1D
+                LDY #$1E
                 : STA PPUDATA
                 DEY
                 BNE :-
