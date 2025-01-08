@@ -1,11 +1,13 @@
 .include "keyboard.s"
 
 .segment "HEADER"
-  ; .byte "NES", $1A      ; iNES header identifier
+  ; .byte "NES", $1A        ; NES2.0 header identifier
   .byte $4E, $45, $53, $1A
-  .byte $02               ; 2x 16KB PRG code
-  .byte $00               ; 0x  8KB CHR data
-  .byte $A9, $D0        ; mapper 0, vertical mirroring
+  .byte $02                 ; 2x 16KB PRG code
+  .byte $00                 ; 0x  8KB CHR data
+  .byte $A9, $D8            ; mapper 0, vertical mirroring
+  .byte $00, $00, $0F, $04  ; 8KB of Work RAM, 1KB of CHR RAM
+  .byte $00, $00, $00, $23  ; default expansion device Family Basic Keyboard
 
 .segment "VECTORS"
   ;; When an NMI happens (once per frame if enabled) the label nmi:
@@ -160,11 +162,10 @@ load_palettes:  LDA #$3F
 JSR KEYBOARD::INIT
 
 ;; ready to start mon        
-NESMON:         LDY #$1F
-                LDA #$20        ; set the VSCROLL start
-                STA VSCROLLH
-                LDA #$21        ; start on second line for overscan reasons
-                STA VSCROLLL
+NESMON:         LDY #$20        ; set the VSCROLL start       
+                STY VSCROLLH
+                INY             ; start on second line for overscan reasons
+                STY VSCROLLL
 NOTCR:          CMP #$88        ; Backspace?
                 BEQ BACKSPACE   ; Yes.
                 CMP #$9B        ; ESC?
@@ -279,12 +280,17 @@ PRHEX:          AND #$0F        ; Mask LSD for hex print.
                 ADC #$06        ; Add offset for letter.
 ECHO:           STY YIN
                 LDY YOUT
+                CMP #$8D        ; CR? go to new line
+                BEQ :+
+
+                JSR KEYBOARD::CONVASCII  ; convert the ascii here
                 STA DSP,Y
                 INY
                 JSR VBWAIT
+
                 CPY #$1E        ; when running a program that will print to the screen
-                BMI :+          ; check if line reaches max length and move to a new
-                  JSR CLEARLINE ; line if necessary
+                BMI :++         ; check if line reaches max length and move to a new
+                  :JSR CLEARLINE ; line if necessary
                   LDY #$00
                 :STY YOUT
                 LDY YIN
@@ -310,24 +316,25 @@ NMI:            BIT READY       ; abort if not ready yet
                 PHA
                 TYA
                 PHA
-                
-                ; not using sprites, so no OAM DMA or sprite enable
-                LDA #%00001010	; Enable background
+
+;; TakuikaNinja - allows for writes to the $0200 page to be reflected in OAM.
+                LDA #$00 	    ; Set SPR-RAM address to 0
+                STA OAMADDR
+                LDA #$02        ; Set OAMDMA address to $0200
+                STA OAMDMA
+                LDA #%00011110	; Enable sprites and background
                 STA PPUMASK
 
 ;; transfer DSP contents to the PPU nametable
-                LDY #$00
                 BIT PPUSTATUS
                 LDA VSCROLLH    
                 STA PPUADDR
                 LDA VSCROLLL
                 STA PPUADDR
-
+                
+                LDY #$00
                 : LDA DSP,Y
                 INY
-                CMP #$8D
-                BEQ :-
-                JSR KEYBOARD::CONVASCII
                 STA PPUDATA
                 CPY #$1E
                 BMI :-
@@ -350,7 +357,7 @@ NMI:            BIT READY       ; abort if not ready yet
                 LDY #$1D
                 : STA PPUDATA
                 DEY
-                BPL :-
+                BNE :-
 
                 PLA
                 STA VSCROLLL
@@ -375,7 +382,8 @@ NMI:            BIT READY       ; abort if not ready yet
 IRQ:
                 RTI
 
-CLEARLINE:      STY YIN   ; save the y value for IN
+CLEARLINE:      PHA
+                STY YIN   ; save the y value for IN
                 ; increase the vscroll
                 JSR INCVSCROLL
 
@@ -403,8 +411,8 @@ SKIPOVER:       STA VSCROLLY
                 STY YOUT
 
                 JSR VBWAIT      ; wait for v-blank
-
                 LDY YIN         ; restore the y value for IN
+                PLA
                 RTS
 
 INCVSCROLL:     LDA VSCROLLH

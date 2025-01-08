@@ -72,10 +72,10 @@
                 ROL mseinput
                 BCC JOY2LOOP
 
-            STY $1D
+            STY YSAV            ; we can make use of YSAV here, it won't conflict
             LDA kbinput
             AND #$80
-            STA $1F             ; store up/down status
+            STA fkbtemp         ; store up/down status
             CMP #$00 
             LDA kbinput
             BEQ :+
@@ -97,8 +97,8 @@
             CPY #$00
             BEQ :+
             LDA #':'            ; could do math, just replace for now
-            :ORA $1F            ; restore status
-    STOREASCII:LDY $1D
+            :ORA fkbtemp        ; restore status
+    STOREASCII:LDY YSAV
             STA kbread, Y
             LDA mseinput
             STA mseread, Y
@@ -123,7 +123,7 @@
         DEY
         BNE :-
         PHA
-        LDA $1F
+        LDA fkbtemp
         AND #$80
         BNE SUBMODKEY
         PLA
@@ -143,7 +143,7 @@
     KBDREADY:
     ; some key presses may already be buffered, we want to return those
     ; first if necessary before looking for new keys from the host
-        STY $0D
+        STY YSAV
         LDY kbreadp
         LBUF:
             CPY #$04
@@ -155,11 +155,12 @@
             JMP LBUF
     BUFREADY:
         STY kbreadp
-        LDY $0D
+        LDY YSAV
         CMP #$00
         RTS 
 
     REFBUFFER:
+        LDY YSAV                ; restore Y
         LDA #$00                ; reset pointer index
         STA kbreadp
         LDA kbdetect
@@ -177,19 +178,18 @@
         JSR READKBMH
     NOTREADY:
         LDA #$00                ; signal not ready this round
-        LDY $0D                 ; restore Y
         RTS
 
     READKBD:
     ; we know there is something in the buffer, at least one character,
     ; and the pointer should be pointing at it already
     ; can be buffer the family keyboard keys in the same place?
-        STY $0D
+        STY YSAV
         LDY kbreadp             ; load the pointer
         LDA kbread, Y           ; load the character in butter
         INY                     ; advance the pointer
         STY kbreadp             ; store the pointer
-        LDY $0D
+        LDY YSAV
         RTS
 
     CLEARKBUF:
@@ -213,18 +213,18 @@
 
         LDY #$00
         LDA #$05
-        STA $4016               ; strobe family keyboard for report
+        STA JOYPAD1              ; strobe family keyboard for report
         NOP
         NOP
         NOP
         LDA #$04
-        STA $0C
+        STA mseinput             ; we can use mseinput here safely, too
     readkeyboard:
-        STA $4016               
+        STA JOYPAD1               
         NOP
         NOP
         NOP
-        LDA $4017
+        LDA JOYPAD2
         LSR
         CLC
         AND #$0F
@@ -244,10 +244,10 @@
         PHA                     ; and Y
         ASL                     ; multiply by 4 to get word pos
         ASL
-        STA $0F
+        STA kbinput             ; we can use kbinput here, it won't conflict with kbmhost
         CLC
         TXA
-        ADC $0F                 ; location of target character
+        ADC kbinput             ; location of target character
         TAY
         LDA FBKBMAP, Y
         CMP #$00
@@ -266,9 +266,9 @@
         BNE parsekeyboard
     nextkeyboard:LDA fkbtemp 
         STA $50, Y              ; store new keyboard values
-        LDA $0C
+        LDA mseinput
         EOR #$02                ; flipflop the 2nd bit to switch column/row
-        STA $0C
+        STA mseinput
         INY
         CPY #$12
         BCC readkeyboard
