@@ -155,7 +155,7 @@ load_palettes:  LDA #$3F
                 LDA #$00        ; set scroll
                 STA PPUSCROLL
                 STA PPUSCROLL
-                LDA #%10000000	; Enable NMI
+                LDA #%10000000  ; Enable NMI
                 STA PPUCTRL
 
 ;; initialize keyboard
@@ -170,18 +170,19 @@ NOTCR:          CMP #$88        ; Backspace?
                 BEQ BACKSPACE   ; Yes.
                 CMP #$9B        ; ESC?
                 BEQ ESCAPE      ; Yes.
-                INY            ; Advance text index.
+                INY             ; Advance text index.
                 CPY #$1E        ; compare with 30
                 BMI NEXTCHAR    ; Auto ESC if > 30.
 ESCAPE:         LDA #'\'+$80    ; "\".
                 JSR ECHO        ; Output it.
-GETLINE:        JSR CLEARLINE   ;
+GETLINE:        LDA #$8D        ; CR.
+                JSR ECHO        ; Output it.
                 LDY #$01        ; Initialize text index.
 BACKSPACE:      DEY             ; Back up text index.
                 BMI GETLINE     ; Beyond start of line, reinitialize.
-NEXTCHAR:       JSR KEYBOARD::KBDREADY ; Key ready?
-                BPL NEXTCHAR    ; Loop until ready
+NEXTCHAR:       JSR VBWAIT      ; Wait for NMI to read keyboard
                 JSR KEYBOARD::READKBD ; Load character
+		            BPL NEXTCHAR    ; Loop until ready
                 STA IN,Y
                 JSR ECHO
                 CMP #$8D
@@ -302,32 +303,32 @@ ECHO:           STY YIN
 
 ;; PPUSTATUS bit 7 is unreliable for vblank detection
 ;; use a flag in RAM instead, so the NMI handler knows it's safe to run
-VBWAIT:         SEC             ; set NMI ready flag
+VBWAIT:         SEC              ; set NMI ready flag
                 ROR READY
                 : BIT READY      ; and wait until the NMI handler clears it
                 BMI :-
                 RTS
 
-NMI:            BIT READY       ; abort if not ready yet
+NMI:            BIT READY        ; abort if not ready yet
                 BPL IRQ
           
-                PHA         ; push contents of flags, and registers onto stack
+                PHA              ; push contents of flags, and registers onto stack
                 TXA
                 PHA
                 TYA
                 PHA
 
 ;; TakuikaNinja - allows for writes to the $0200 page to be reflected in OAM.
-                LDA #$00 	    ; Set SPR-RAM address to 0
+                LDA #$00 	; Set SPR-RAM address to 0
                 STA OAMADDR
                 LDA #$02        ; Set OAMDMA address to $0200
                 STA OAMDMA
-                LDA #%00011110	; Enable sprites and background
+                LDA #%00011110  ; Enable sprites and background
                 STA PPUMASK
 
 ;; transfer DSP contents to the PPU nametable
                 BIT PPUSTATUS
-                LDA VSCROLLH    
+                LDA VSCROLLH
                 STA PPUADDR
                 LDA VSCROLLL
                 STA PPUADDR
@@ -368,8 +369,11 @@ NMI:            BIT READY       ; abort if not ready yet
                 STX PPUSCROLL   ; set scroll
                 LDA VSCROLLY
                 STA PPUSCROLL
-                LDA #%10000000	; select nametable and keep NMI enabled
+                LDA #%10000000  ; select nametable and keep NMI enabled
                 STA PPUCTRL
+
+                ; with all the PPU handling done, check the keyboard buffer
+                JSR KEYBOARD::KBDREADY
 
                 ; restore contents of flags and registers from stack
                 PLA
@@ -383,7 +387,7 @@ IRQ:
                 RTI
 
 CLEARLINE:      PHA
-                STY YIN   ; save the y value for IN
+                STY YIN         ; save the y value for IN
                 ; increase the vscroll
                 JSR INCVSCROLL
 
