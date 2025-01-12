@@ -29,3 +29,13 @@ A longer program that prints a more compact list of ASCII chars is this one.
 0 (RET)
 R (RET)
 ```
+
+An even longer program that displays a sprite that diagonaly moves across the screen is this one.
+This one jumps to the VBWAIT subroutine at address 8380 (80 83), this could also change in new builds.
+```
+0: A2 b 4 b 8E b 1 b 2 b 8E b 2 b 2 (RET)
+8: A2 b 0 b 8E b 0 b 2 b 8E b 3 b 2 (RET)
+10:E8 b 20 b 80 b 83 b 4C b A b 0 (RET)
+0 (RET)
+R (RET)
+```
