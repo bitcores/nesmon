@@ -279,7 +279,8 @@ PRHEX:          AND #$0F        ; Mask LSD for hex print.
                 CMP #$BA        ; Digit?
                 BCC ECHO        ; Yes, output it.
                 ADC #$06        ; Add offset for letter.
-ECHO:           STY YIN
+ECHO:           PHA             ; Back up A
+                STY YIN
                 LDY YOUT
                 CMP #$8D        ; CR? go to new line
                 BEQ :+
@@ -295,11 +296,10 @@ ECHO:           STY YIN
                   LDY #$00
                 :STY YOUT
                 LDY YIN
+                PLA             ; Restore A
                 RTS             ; Return.
                 ;; ECHO needs to be used to push characters into the frame layout
 
-                BRK             ; unused
-                BRK             ; unused
 
 ;; PPUSTATUS bit 7 is unreliable for vblank detection
 ;; use a flag in RAM instead, so the NMI handler knows it's safe to run
