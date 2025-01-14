@@ -467,7 +467,7 @@ irq_handler:
       irqtwo:   JMP (irqpointer+3)        ; if #0100,0000
       irqthree: BVS irqfour
                 JMP (irqpointer+5)        ; if #1000,0000
-      irqfour:  JMP (irqpointer+6)        ; if #1100,0000
+      irqfour:  JMP (irqpointer+7)        ; if #1100,0000
 
 .segment "RODATA"
 
