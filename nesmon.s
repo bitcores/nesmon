@@ -11,14 +11,12 @@
 
 .segment "VECTORS"
   ;; When an NMI happens (once per frame if enabled) the label nmi:
-  .addr NMI
+  .addr nmi_handler
   ;; When the processor first turns on or is reset, it will jump to the label reset:
   .addr RESET
   ;; External interrupt IRQ (unused)
-  .addr IRQ
+  .addr irq_handler
 
-; "nes" linker config requires a STARTUP section, even if it's empty
-.segment "STARTUP"
 
 ; Main code segment for the program
 .segment "CODE"
@@ -58,6 +56,8 @@ kbmodkey        = $40           ;  modifier key status
 ; Other Variables
 IN              = $0300         ;  Input buffer to $031E ; $0200 is OAM by convention
 DSP             = $0320         ;  Display buffer to $033E
+nmipointer      = $07EE         ;  pointer for where nmi interrupt will jump to
+irqpointer      = $07F7         ;  pointer for where irq interrupt will jump to
 PPUCTRL         = $2000
 PPUMASK         = $2001
 PPUSTATUS       = $2002
@@ -101,6 +101,16 @@ clear_ram:      LDA #$00
                 STA $0200, x
                 INX
                 BNE clear_ram
+
+;; set up the default nmi and irq interrupt addresses 
+                LDA #<NMI
+                STA nmipointer+1
+                LDA #>NMI
+                STA nmipointer+2
+                LDA #<IRQ
+                STA irqpointer+1
+                LDA #>IRQ
+                STA irqpointer+2
 
 ;; second wait for vblank, PPU is ready after this
                 : BIT PPUSTATUS
@@ -437,6 +447,27 @@ INCVSCROLLL:    CLC
                 BCC :+
 INCVSCROLLH:    INC VSCROLLH
                 : RTS
+
+;; these are the jump addresses for nmi and irq interrupts
+nmi_handler:
+                BIT nmipointer
+                BMI nmithree
+                BVS nmitwo
+                JMP (nmipointer+1)        ; default jump location
+      nmitwo:   JMP (nmipointer+3)        ; if #0100,0000
+      nmithree: BVS nmifour
+                JMP (nmipointer+5)        ; if #1000,0000
+      nmifour:  JMP (nmipointer+7)        ; if #1100,0000
+
+irq_handler:
+                BIT irqpointer
+                BMI irqthree
+                BVS irqtwo
+                JMP (irqpointer+1)        ; default jump location
+      irqtwo:   JMP (irqpointer+3)        ; if #0100,0000
+      irqthree: BVS irqfour
+                JMP (irqpointer+5)        ; if #1000,0000
+      irqfour:  JMP (irqpointer+6)        ; if #1100,0000
 
 .segment "RODATA"
 
