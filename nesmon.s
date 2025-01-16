@@ -27,6 +27,7 @@
 
 
 ; Page 0 Variables
+RESETDETECT     = $20
 XAML            = $24           ;  Last "opened" location Low
 XAMH            = $25           ;  Last "opened" location High
 STL             = $26           ;  Store address Low
@@ -89,6 +90,17 @@ RESET:          SEI
                 : BIT PPUSTATUS
                 BPL :-
 
+;; check if the four bytes in resetdetect are expected values
+                :TXA
+                CMP RESETDETECT, X
+                BNE poweron
+                INX
+                CPX #$04
+                BNE :-
+                JMP interrupt_setup
+
+poweron:
+                LDX #$00
 clear_ram:      LDA #$00
                 STA $0000, x
                 STA $0100, x
@@ -102,8 +114,15 @@ clear_ram:      LDA #$00
                 INX
                 BNE clear_ram
 
+;; set 4 bytes of resetdetect to known values
+                : TXA
+                STA RESETDETECT, X
+                INX
+                CPX #04
+                BNE :-
+
 ;; set up the default nmi and irq interrupt addresses 
-                LDA #<NMI
+interrupt_setup:LDA #<NMI
                 STA nmipointer+1
                 LDA #>NMI
                 STA nmipointer+2
@@ -319,8 +338,29 @@ VBWAIT:         SEC              ; set NMI ready flag
                 BMI :-
                 RTS
 
+;; these are the jump addresses for nmi and irq interrupts
+nmi_handler:
+                BIT nmipointer
+                BMI nmithree
+                BVS nmitwo
+                JMP (nmipointer+1)        ; default jump location
+      nmitwo:   JMP (nmipointer+3)        ; if #0100,0000
+      nmithree: BVS nmifour
+                JMP (nmipointer+5)        ; if #1000,0000
+      nmifour:  JMP (nmipointer+7)        ; if #1100,0000
+
+irq_handler:
+                BIT irqpointer
+                BMI irqthree
+                BVS irqtwo
+                JMP (irqpointer+1)        ; default jump location
+      irqtwo:   JMP (irqpointer+3)        ; if #0100,0000
+      irqthree: BVS irqfour
+                JMP (irqpointer+5)        ; if #1000,0000
+      irqfour:  JMP (irqpointer+7)        ; if #1100,0000
+
 NMI:            BIT READY        ; abort if not ready yet
-                BPL IRQ
+                BPL EXITNMI
           
                 PHA              ; push contents of flags, and registers onto stack
                 TXA
@@ -393,6 +433,8 @@ NMI:            BIT READY        ; abort if not ready yet
                 PLA
 
                 ASL READY       ; clear NMI ready flag
+EXITNMI:
+                RTI
 IRQ:
                 RTI
 
@@ -447,27 +489,6 @@ INCVSCROLLL:    CLC
                 BCC :+
 INCVSCROLLH:    INC VSCROLLH
                 : RTS
-
-;; these are the jump addresses for nmi and irq interrupts
-nmi_handler:
-                BIT nmipointer
-                BMI nmithree
-                BVS nmitwo
-                JMP (nmipointer+1)        ; default jump location
-      nmitwo:   JMP (nmipointer+3)        ; if #0100,0000
-      nmithree: BVS nmifour
-                JMP (nmipointer+5)        ; if #1000,0000
-      nmifour:  JMP (nmipointer+7)        ; if #1100,0000
-
-irq_handler:
-                BIT irqpointer
-                BMI irqthree
-                BVS irqtwo
-                JMP (irqpointer+1)        ; default jump location
-      irqtwo:   JMP (irqpointer+3)        ; if #0100,0000
-      irqthree: BVS irqfour
-                JMP (irqpointer+5)        ; if #1000,0000
-      irqfour:  JMP (irqpointer+7)        ; if #1100,0000
 
 .segment "RODATA"
 

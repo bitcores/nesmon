@@ -10,16 +10,16 @@
   ;; detect keyboard present
   ;; first, try family basic keyboard
     LDA #$05
-    STA $4016
+    STA JOYPAD1
     NOP
     NOP
     NOP
     LDA #$04
-    STA $4016
+    STA JOYPAD1
     NOP
     NOP
     NOP
-    LDA $4017
+    LDA JOYPAD2
     AND #$1E
     CMP #$1E
     BNE KBMHOST
