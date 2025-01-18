@@ -27,7 +27,7 @@
 
 
 ; Page 0 Variables
-RESETDETECT     = $20
+RESETDETECT     = $20           ;  Four bytes $20-23 are used to detect a reset
 XAML            = $24           ;  Last "opened" location Low
 XAMH            = $25           ;  Last "opened" location High
 STL             = $26           ;  Store address Low
@@ -52,6 +52,7 @@ kbread          = $37           ;  keyboard buffered input
 mseread         = $3B           ;  mouse read input
 fkbtemp         = $3F
 kbmodkey        = $40           ;  modifier key status
+
 
 
 ; Other Variables
@@ -90,33 +91,44 @@ RESET:          SEI
                 : BIT PPUSTATUS
                 BPL :-
 
+;; VSCROLLY and ROW need to be zeroed regardless of reset or poweron
+                STX VSCROLLY
+                STX ROW
 ;; check if the four bytes in resetdetect are expected values
                 :TXA
-                CMP RESETDETECT, X
+                CMP RESETDETECT,X
                 BNE poweron
                 INX
                 CPX #$04
                 BNE :-
+;; if this is a reset, clear out IN and DSP buffers anyway
+                LDX #$3F
+                LDA #$00
+                : STA $0300,X
+                DEX
+                BPL :-
+                STA YIN        ;  and reset the y-index
+                STA YOUT
                 JMP interrupt_setup
 
 poweron:
                 LDX #$00
 clear_ram:      LDA #$00
-                STA $0000, x
-                STA $0100, x
-                STA $0300, x
-                STA $0400, x
-                STA $0500, x
-                STA $0600, x
-                STA $0700, x
+                STA $0000,X
+                STA $0100,X
+                STA $0300,X
+                STA $0400,X
+                STA $0500,X
+                STA $0600,X
+                STA $0700,X
                 LDA #$FE
-                STA $0200, x
+                STA $0200,X
                 INX
                 BNE clear_ram
 
 ;; set 4 bytes of resetdetect to known values
                 : TXA
-                STA RESETDETECT, X
+                STA RESETDETECT,X
                 INX
                 CPX #04
                 BNE :-
@@ -140,8 +152,8 @@ load_palettes:  LDA #$3F
                 STA PPUADDR
                 LDA #$00
                 STA PPUADDR
-                LDX #$00
-                : LDA PALETTES, x
+                TAX
+                : LDA PALETTES,X
                 STA PPUDATA
                 INX
                 CPX #$20
@@ -153,9 +165,8 @@ load_palettes:  LDA #$3F
                 STA PPUADDR
                 LDA #$00
                 STA PPUADDR
-                LDA #0
-                LDY #4
-                : LDX #0
+                LDY #$04
+                : LDX #$00
                 : STA PPUDATA
                 INX
                 BNE :-
@@ -164,19 +175,19 @@ load_palettes:  LDA #$3F
 
 ;; load CHR-RAM data
                 LDA #<TILEDATA
-                STA $00
+                STA VSCROLLL    ; these will be initialized later
                 LDA #>TILEDATA
-                STA $01
+                STA VSCROLLH    ; so I can make use of them here
                 LDY #$00
                 STY PPUMASK
                 STY PPUADDR
                 STY PPUADDR
                 LDX #$04        ; store up to 4x 256B pages
-                : LDA ($00),y
+                : LDA (VSCROLLL),Y
                 STA PPUDATA
                 INY
                 BNE :-
-                INC $01
+                INC VSCROLLH    ; without causing problems
                 DEX
                 BNE :-
 
@@ -188,7 +199,7 @@ load_palettes:  LDA #$3F
                 STA PPUCTRL
 
 ;; initialize keyboard
-JSR KEYBOARD::INIT
+                JSR KEYBOARD::INIT
 
 ;; ready to start mon        
 NESMON:         LDY #$20        ; set the VSCROLL start       
@@ -323,7 +334,9 @@ ECHO:           PHA             ; Back up A
                 BMI :++         ; check if line reaches max length and move to a new
                   :JSR CLEARLINE ; line if necessary
                   LDY #$00
-                :STY YOUT
+                :LDA #$20
+                STA DSP,Y
+                STY YOUT
                 LDY YIN
                 PLA             ; Restore A
                 RTS             ; Return.

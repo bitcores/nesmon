@@ -9,19 +9,29 @@
   INIT:   ; discover which keyboard mode to use and prepare it
   ;; detect keyboard present
   ;; first, try family basic keyboard
-    LDA #$05
+    LDA #$05                ; enable family basic keyboard
     STA JOYPAD1
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
     LDA #$04
     STA JOYPAD1
-    NOP
-    NOP
-    NOP
+    JSR FAMIDELAY
+
     LDA JOYPAD2
     AND #$1E
-    CMP #$1E
+    CMP #$1E                ; check all 1s for row 0 column 0
+    BNE KBMHOST
+    LDA #$01
+    STA JOYPAD1             ; disable family basic keyboard
+    JSR FAMIDELAY
+    
+    LDA JOYPAD2
+    AND #$1E
+    CMP #$00                ; check all 0s for row 0 column 0
     BNE KBMHOST
     LDA #$01
     JMP ENDINIT
@@ -85,7 +95,7 @@
       BCC :+
       JSR SETMODKEYS
       :TAY
-      LDA KBMHOSTMAP, Y     ; load ascii code
+      LDA KBMHOSTMAP,Y      ; load ascii code
       CMP #$00
       BEQ STOREASCII        ; if the code is invalid, don't restore
       CMP #';'              ; we are only looking to mod ; right now, create subroutine for more handling
@@ -100,9 +110,9 @@
       LDA #':'              ; could do math, just replace for now
       :ORA fkbtemp          ; restore status
 STOREASCII:LDY YSAV
-      STA kbread, Y
+      STA kbread,Y
       LDA mseinput
-      STA mseread, Y
+      STA mseread,Y
       INY
       CPY #$04
       BNE LOOPFOUR
@@ -148,7 +158,7 @@ STOREASCII:LDY YSAV
     LBUF:
       CPY #$04
       BEQ REFBUFFER         ; no release key in buffer
-      LDA kbread, Y
+      LDA kbread,Y
       CMP #$00
       BNE BUFREADY
       INY
@@ -183,7 +193,7 @@ STOREASCII:LDY YSAV
   READKBD:
     STY YSAV
     LDY kbreadp             ; load the pointer
-    LDA kbread, Y           ; load the character in buffer
+    LDA kbread,Y            ; load the character in buffer
     INY                     ; advance the pointer
     STY kbreadp             ; store the pointer
     LDY YSAV
@@ -196,7 +206,7 @@ STOREASCII:LDY YSAV
     PHA
     LDY #$03
     LDA #$00
-    :STA kbread, Y
+    :STA kbread,Y
       DEY
       BPL :-
     PLA
@@ -216,21 +226,25 @@ STOREASCII:LDY YSAV
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LDA #$04
     STA mseinput             ; we can use mseinput here safely, too
   readkeyboard:
     STA JOYPAD1               
+    JSR FAMIDELAY
     NOP
     NOP
-    NOP
+
     LDA JOYPAD2
     LSR
     CLC
     AND #$0F
     STA fkbtemp             ; store in fkbtemp
-    CMP $50, Y              ; if same as history, ignore
+    CMP $50,Y               ; if same as history, ignore
     BEQ nextkeyboard  
-    LDA $50, Y              ; we want to check if a key has been released
+    LDA $50,Y               ; we want to check if a key has been released
     ORA fkbtemp             ; get all 1 positions
     EOR fkbtemp             ; get the released positions
     LDX #$04
@@ -248,18 +262,18 @@ STOREASCII:LDY YSAV
     TXA
     ADC kbinput             ; location of target character
     TAY
-    LDA FBKBMAP, Y
+    LDA FBKBMAP,Y
     CMP #$00
     BEQ restorekbdata
     ORA #$80                ; convert to release code   
     LDY kbreadp         
     CPY #$04                ; do we have four new keys in buffer already?
     BEQ restorekbdata       ; we might lose key presses this way, rarely
-    STA kbread, Y
+    STA kbread,Y
     INY
     STY kbreadp
   restorekbdata:
-    PLA           ; restore kb data
+    PLA                     ; restore kb data
     TAY
     PLA
   finishparse:
@@ -267,7 +281,7 @@ STOREASCII:LDY YSAV
     BNE parsekeyboard
   nextkeyboard:
     LDA fkbtemp 
-    STA $50, Y              ; store new keyboard values
+    STA $50,Y               ; store new keyboard values
     LDA mseinput
     EOR #$02                ; flipflop the 2nd bit to switch column/row
     STA mseinput
@@ -287,7 +301,14 @@ STOREASCII:LDY YSAV
 
     RTS
 
-  CONVASCII: ; ascii values map directly to charmap;
+;; family basic keyboard need ~50 cycles of delay
+  FAMIDELAY:
+    LDX #$0A                ; this shouldn't be getting called any time
+    :DEX                    ; X is hot
+    BNE :-
+    RTS
+
+  CONVASCII: ; ascii values map directly to charmap
     ; return blank for anything below A0
     CMP #$88                ; check for backspace
     BNE :+
