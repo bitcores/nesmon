@@ -51,7 +51,8 @@ kbreadp         = $36           ;  pointer for reading from kbread buffer
 kbread          = $37           ;  keyboard buffered input
 mseread         = $3B           ;  mouse read input
 fkbtemp         = $3F
-kbmodkey        = $40           ;  modifier key status
+KBMODKEY        = $40           ;  modifier key status
+FAMIKEY         = $50           ;  store recent family keyboard key states 
 
 
 
@@ -502,20 +503,3 @@ INCVSCROLLL:    CLC
                 BCC :+
 INCVSCROLLH:    INC VSCROLLH
                 : RTS
-
-.segment "RODATA"
-
-PALETTES:
-  ; Background Palette
-  .byte $0F, $00, $00, $00
-  .byte $0F, $12, $00, $00
-  .byte $0F, $00, $00, $00
-  .byte $0F, $00, $00, $00
-
-  ; Sprite Palette
-  .byte $0F, $20, $17, $29
-  .byte $0F, $07, $00, $00
-  .byte $0F, $1A, $00, $00
-  .byte $0F, $34, $00, $00
-
-TILEDATA: .incbin "./chars.chr"

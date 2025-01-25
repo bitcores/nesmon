@@ -11,9 +11,9 @@ An imperfect version of the Test Program can be run by entering the following co
 
 **Important**
 
-The location of the ECHO subroutine in memory has changed. In the 25-01-16 build it was at 8389 (89 83), now it is at 83B7 (B7 83). The location in memory may change again so always check and only use the example code with the most recent builds.
+The location of the ECHO subroutine in memory has changed. In the 25-01-18 build it was at 83B7 (B7 83), now it is at 8443 (43 84). The location in memory may change again so always check and only use the example code with the most recent builds.
 ```
-0: A9 b 0 b AA b 20 b B7 b 83 b E8 b 8A (RET)
+0: A9 b 0 b AA b 20 b 43 b 84 b E8 b 8A (RET)
 8: 4C b 2 b 0 (RET)
 0 (RET)
 R (RET)
@@ -24,18 +24,18 @@ It doesn't align properly due to window width and missing characters, but it wor
 
 A longer program that prints a more compact list of ASCII chars is this one.
 ```
-0: A9 b 8D b AA b 20 b B7 b 83 b E8 b E0 (RET)
+0: A9 b 8D b AA b 20 b 43 b 84 b E8 b E0 (RET)
 8: EB b B0 b F5 b 8A b 4C b 2 b 0 (RET)
 0 (RET)
 R (RET)
 ```
 
 An even longer program that displays a sprite that diagonaly moves across the screen is this one.
-This one jumps to the VBWAIT subroutine at address 83DE (DE 83), this could also change in new builds.
+This one jumps to the VBWAIT subroutine at address 8475 (75 84), this could also change in new builds.
 ```
 0: A2 b 4 b 8E b 1 b 2 b 8E b 2 b 2 (RET)
 8: A2 b 0 b 8E b 0 b 2 b 8E b 3 b 2 (RET)
-10:E8 b 20 b DE b 83 b 4C b A b 0 (RET)
+10:E8 b 20 b 75 b 84 b 4C b A b 0 (RET)
 0 (RET)
 R (RET)
 ```
