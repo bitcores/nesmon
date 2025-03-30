@@ -223,7 +223,7 @@ BACKSPACE:      DEY             ; Back up text index.
                 BMI GETLINE     ; Beyond start of line, reinitialize.
 NEXTCHAR:       JSR VBWAIT      ; Wait for NMI to read keyboard
                 JSR KEYBOARD::READKBD ; Load character
-		            BPL NEXTCHAR    ; Loop until ready
+	        BPL NEXTCHAR    ; Loop until ready
                 STA IN,Y
                 JSR ECHO
                 CMP #$8D
