@@ -8,7 +8,16 @@
 ; discover which keyboard mode to use and prepare it
 ;; detect keyboard present
 ;; first, try family basic keyboard
-INIT:           LDA #$05          ; enable family basic keyboard
+INIT:           LDY #$00
+                LDX #$15
+;; a keyboard is required so display a message
+                : LDA KEYBOARDMES,Y
+                STA DSP,Y
+                INY
+                DEX
+                BNE :-
+
+DETECT:         LDA #$05          ; enable family basic keyboard
                 STA JOYPAD1
                 NOP
                 NOP
@@ -40,8 +49,14 @@ KBMHOST:        JSR READKBMH
                 LDA #$02
                 JMP ENDINIT
 WAIT4INIT:      JSR VBWAIT        ; keep waiting until keyboard found
-                JMP INIT
+                JMP DETECT
 ENDINIT:        STA kbdetect
+                LDY #$15
+;; a keyboard is required so display a message
+                LDA #$00
+                : STA DSP,Y
+                DEY
+                BNE :-
                 RTS
 
 ; call this during NMI (after PPU control is finished) to check the keyboard
@@ -67,8 +82,7 @@ REFBUFFER:      LDY YSAV                ; restore Y
                 BEQ REFFAMIKBD
                 CMP #$02                ; is it keyboard mouse host?
                 BEQ REFKBMH
-                JSR INIT                ; neither? init the keyboard again ?
-                JMP EXITREADY
+                JMP EXITREADY           ; neither? shouldn't really be here
 REFFAMIKBD:     JSR CLEARKBUF           ; family basic keyboard might (usually) load less than
                 JSR READFAMIKBD         ; four keycodes, so wipe the buffer contents first
                 JMP EXITREADY
@@ -369,6 +383,9 @@ RETCHR:         RTS
 .endproc
 
 .segment "RODATA"
+KEYBOARDMES:  ; DETECTING KEYBOARD...
+  .byte $24, $25, $34, $25, $23, $34, $29, $2E, $27, $00
+  .byte $2B, $25, $39, $22, $2F, $21, $32, $24, $0E, $0E, $0E
 
 FBKBMAP: ; this maps the family keyboard to ascii values; ignore $00
   .byte $5D, $5B, $0D, $00, $00, $00, $00, $00 ; row 0

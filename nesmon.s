@@ -95,6 +95,9 @@ RESET:          SEI
 ;; VSCROLLY and ROW need to be zeroed regardless of reset or poweron
                 STX VSCROLLY
                 STX ROW
+;; set the interrut pointers to the defaults
+                STX nmipointer
+                STX irqpointer
 ;; check if the four bytes in resetdetect are expected values
                 :TXA
                 CMP RESETDETECT,X
@@ -110,6 +113,7 @@ RESET:          SEI
                 BPL :-
                 STA YIN        ;  and reset the y-index
                 STA YOUT
+                STA kbdetect   ;  and redetect keyboard
                 JMP interrupt_setup
 
 poweron:
@@ -198,15 +202,16 @@ load_palettes:  LDA #$3F
                 STA PPUSCROLL
                 LDA #%10000000  ; Enable NMI
                 STA PPUCTRL
-
+                LDY #$20        ; set the VSCROLL start       
+                STY VSCROLLH
+                INY             ; start on second line for overscan reasons
+                STY VSCROLLL
+              
 ;; initialize keyboard
                 JSR KEYBOARD::INIT
 
 ;; ready to start mon        
-NESMON:         LDY #$20        ; set the VSCROLL start       
-                STY VSCROLLH
-                INY             ; start on second line for overscan reasons
-                STY VSCROLLL
+NESMON:         LDY #$21
 NOTCR:          CMP #$88        ; Backspace?
                 BEQ BACKSPACE   ; Yes.
                 CMP #$9B        ; ESC?
@@ -223,7 +228,7 @@ BACKSPACE:      DEY             ; Back up text index.
                 BMI GETLINE     ; Beyond start of line, reinitialize.
 NEXTCHAR:       JSR VBWAIT      ; Wait for NMI to read keyboard
                 JSR KEYBOARD::READKBD ; Load character
-	        BPL NEXTCHAR    ; Loop until ready
+                BPL NEXTCHAR    ; Loop until ready
                 STA IN,Y
                 JSR ECHO
                 CMP #$8D
@@ -390,6 +395,7 @@ NMI:            BIT READY        ; abort if not ready yet
                 LDA #%00011110  ; Enable sprites and background
                 STA PPUMASK
 
+
 ;; transfer DSP contents to the PPU nametable
                 BIT PPUSTATUS
                 LDA VSCROLLH
@@ -435,10 +441,13 @@ NMI:            BIT READY        ; abort if not ready yet
                 STA PPUSCROLL
                 LDA #%10000000  ; select nametable and keep NMI enabled
                 STA PPUCTRL
-
+                
+                LDA kbdetect     ; don't poll keyboard if none present
+                BEQ ENDNMI
                 ; with all the PPU handling done, check the keyboard buffer
                 JSR KEYBOARD::KBDREADY
 
+ENDNMI:   
                 ; restore contents of flags and registers from stack
                 PLA
                 TAY
@@ -454,6 +463,10 @@ IRQ:
 
 CLEARLINE:      PHA
                 STY YIN         ; save the y value for IN
+                LDY YOUT        ; clear the @ carot
+                LDA #$00
+                STA DSP,Y
+                JSR VBWAIT      ; ensure line updates rendered first
                 ; increase the vscroll
                 JSR INCVSCROLL
 
